@@ -1,0 +1,110 @@
+/* Postman theme — the base theme.
+   These tokens sit on plain :root, so they are the fallback for every other theme:
+   a theme only has to override the tokens it wants to change. The structural rules in
+   styles.css are written against this look. */
+
+:root {
+  --bg-0: #161616;
+  --bg-1: #1e1e1e;
+  --bg-2: #232323;
+  --bg-3: #2d2d2d;
+  --bg-4: #363636;
+  --bg-input: #191919;
+  --bg-popover: #262626;
+  --seg-active: #4a4a4a;
+  --seg-active-text: var(--text);
+  --border: #2f2f2f;
+  --border-strong: #404040;
+  --text: #e8e8e8;
+  --text-2: #a8a8a8;
+  --text-3: #707070;
+  --accent: #ff6c37;
+  --accent-text: var(--accent);
+  --accent-bg: rgba(255, 108, 55, 0.16);
+  --primary: #1a73e8;
+  --primary-hover: #3b8af0;
+  --on-primary: #ffffff;
+  --danger: #e5484d;
+  --ok: #3fbf74;
+  --info: #5aa2f5;
+  --warn: #f2a93b;
+  --err: #f05252;
+  --m-get: #6bdd9a;
+  --m-post: #ffe47e;
+  --m-put: #74aef6;
+  --m-patch: #c0a8e1;
+  --m-delete: #f79a8e;
+  --m-other: #b0b0b0;
+  --var-ok: #6bdd9a;
+  --var-ok-bg: rgba(107, 221, 154, 0.12);
+  --var-missing: #ff7b72;
+  --var-missing-bg: rgba(255, 123, 114, 0.14);
+  --selection: rgba(90, 162, 245, 0.32);
+  --selection-match: rgba(90, 162, 245, 0.16);
+  --search-match: rgba(242, 169, 59, 0.35);
+  --active-line: rgba(255, 255, 255, 0.03);
+  --syn-keyword: #ff7ab2;
+  --syn-string: #9ece6a;
+  --syn-number: #ff9e64;
+  --syn-property: #7dcfff;
+  --syn-function: #7aa2f7;
+  --syn-comment: #6a737d;
+  --syn-tag: #f7768e;
+  --syn-variable: #e0e0e0;
+  --syn-punct: #9aa0a6;
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  /* logo: white jellyfish on the accent disc */
+  --logo-bg: var(--accent);
+  --logo-fg: #ffffff;
+  color-scheme: dark;
+}
+
+:root[data-mode="light"] {
+  --bg-0: #f4f4f4;
+  --bg-1: #ffffff;
+  --bg-2: #f9f9f9;
+  --bg-3: #ededed;
+  --bg-4: #e2e2e2;
+  --bg-input: #ffffff;
+  --bg-popover: #ffffff;
+  --seg-active: #ffffff;
+  --border: #e4e4e4;
+  --border-strong: #cfcfcf;
+  --text: #212121;
+  --text-2: #5f5f5f;
+  --text-3: #9a9a9a;
+  --accent: #eb5a28;
+  --accent-bg: rgba(235, 90, 40, 0.1);
+  --primary: #0b6cda;
+  --primary-hover: #0a5fc0;
+  --danger: #d4343a;
+  --ok: #0f8a45;
+  --info: #0b6cda;
+  --warn: #b86e00;
+  --err: #cf2c2c;
+  --m-get: #007f31;
+  --m-post: #ad7a03;
+  --m-put: #0053b8;
+  --m-patch: #623497;
+  --m-delete: #b0271b;
+  --m-other: #606060;
+  --var-ok: #0f7a3d;
+  --var-ok-bg: rgba(15, 122, 61, 0.1);
+  --var-missing: #c62828;
+  --var-missing-bg: rgba(198, 40, 40, 0.09);
+  --selection: rgba(11, 108, 218, 0.22);
+  --selection-match: rgba(11, 108, 218, 0.1);
+  --search-match: rgba(255, 190, 0, 0.4);
+  --active-line: rgba(0, 0, 0, 0.025);
+  --syn-keyword: #b3127c;
+  --syn-string: #2f7d16;
+  --syn-number: #b35b00;
+  --syn-property: #0b5fa5;
+  --syn-function: #3c4fcf;
+  --syn-comment: #8a8f95;
+  --syn-tag: #b1283f;
+  --syn-variable: #212121;
+  --syn-punct: #6b6b6b;
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+  color-scheme: light;
+}
