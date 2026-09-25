@@ -204,9 +204,12 @@ Everything lives in one folder of plain, pretty-printed JSON files:
 
 | OS | Location |
 |----|----------|
-| macOS | `~/Library/Application Support/dev.localpost.app/data/` |
-| Windows | `%APPDATA%\dev.localpost.app\data\` |
-| Linux | `~/.local/share/dev.localpost.app/data/` |
+| macOS | `~/Library/Application Support/dev.localpost.desktop/data/` |
+| Windows | `%APPDATA%\dev.localpost.desktop\data\` |
+| Linux | `~/.local/share/dev.localpost.desktop/data/` |
+
+Versions before the identifier change used `dev.localpost.app` instead. On first launch Localpost moves
+that folder (and any keychain secrets) to the new location automatically.
 
 | File | Contents |
 |------|----------|

@@ -1,6 +1,7 @@
 mod http;
 mod linked;
 mod load;
+mod migrate;
 mod oauth;
 mod workspaces;
 mod secrets;
@@ -72,6 +73,9 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .expect("could not resolve app data directory");
+            for (old, new) in migrate::migrate_app_dir(&app_dir) {
+                secrets::move_entry(&old, &new);
+            }
             let data_dir = workspaces::active_dir(&app_dir);
             std::fs::create_dir_all(&data_dir)?;
             app.manage(AppState::new(app_dir, data_dir));
