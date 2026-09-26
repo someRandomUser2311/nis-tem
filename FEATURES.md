@@ -49,7 +49,7 @@ Legend: ✅ supported · 🟡 partial · ❌ not supported (yet)
 | Body: GraphQL (query + variables) | ✅ | |
 | Paste a cURL command into the URL bar | ✅ | Converted into a full request |
 | Per-request settings: redirects, SSL verification, timeout | ✅ | Otherwise the global settings apply |
-| Request description / docs | ✅ | Request → Settings → Description |
+| Request description / docs | ✅ | Request → **Docs** tab (Markdown). See [API documentation](#api-documentation) |
 | Cancel an in-flight request | ✅ | |
 | Multiple tabs, unsaved-changes indicator, keyboard tab switching | ✅ | Drag-to-reorder tabs ❌ |
 | Save / Save As to any collection or folder | ✅ | |
@@ -204,17 +204,59 @@ Everything listens on `127.0.0.1` only, unless you switch on *Allow other device
 |---|---|---|
 | Postman Collection v2.1 | ✅ | ✅ |
 | Postman Collection v2.0 | ✅ | — |
-| OpenAPI 3.x / Swagger 2 (JSON or YAML) | ✅ Folders by tag, `{{baseUrl}}` from servers, path/query/header params, example bodies generated from schemas, documented responses become examples, security schemes become auth | ✅ OpenAPI 3.1 (YAML or JSON) |
+| OpenAPI 3.x / Swagger 2 (JSON or YAML) | ✅ Folders by tag, `{{baseUrl}}` from servers, path/query/header params with required/type/enum, request and response schemas (`$ref`s inlined), example bodies generated from schemas, documented responses become examples, security schemes become auth | ✅ OpenAPI 3.1 (YAML or JSON) with parameter details, schemas, example descriptions, tags and deprecations |
 | HAR (browser dev tools) | ✅ One folder per host; responses become examples | ✅ History → *Export history as HAR* |
 | Insomnia v4 export | ✅ Workspaces, folders, environments, auth; `{{ _.var }}` converted | — |
 | Hoppscotch collection | ✅ `<<var>>` converted | — |
 | Bruno (`.bru` file or collection folder) | ✅ Folders, `seq` order, auth, scripts/tests, environments | — |
-| Static HTML documentation | — | ✅ Collection → *Publish docs as HTML* (one self-contained file) |
+| API documentation | — | ✅ Static site, single HTML file, Markdown, PDF (see [API documentation](#api-documentation)) |
 | Postman environment | ✅ | ✅ |
 | Postman globals | ✅ | ✅ |
 | cURL command | ✅ (Import dialog or paste in URL bar) | ✅ (code snippet) |
 | Localpost workspace backup | ✅ | ✅ |
 | Drag & drop files into the Import dialog | ✅ | |
+
+## API documentation
+
+Write the docs next to the requests they describe, then publish them locally. Open a collection's docs from its menu (**View documentation**), the **Docs** button in the collection tab, or ⌘K → "Docs: …".
+
+**Writing**
+
+| Feature | Notes |
+|---|---|
+| Docs view | Outline (guides, folders, endpoints), rendered docs and code samples side by side; **Edit** mode to write every description in place |
+| Markdown | GitHub-style callouts (`> [!NOTE]`, `[!TIP]`, `[!WARNING]`…), tables, code blocks, Mermaid diagrams (```` ```mermaid ````), links between requests (`[text](#req:<id>)`; *Copy link* on the request's Docs tab) |
+| Guide pages | Getting started, Authentication, Errors…: add, rename and reorder them in Edit mode |
+| Request → **Docs** tab | Description, status (stable / beta / deprecated), tags, *Hide from docs* |
+| Parameter details | The docs button on every query / path / header / form row: required, type, format, allowed values, default, example, deprecated |
+| Schemas | Request body and response JSON Schemas shown as field tables; **Generate** from the body, the last response or an example |
+| Examples | Description, *default example* (shown first), and a schema per example (e.g. for error bodies) |
+| Code samples | Any of the 15 snippet languages; variables filled from a chosen environment; secrets and credentials replaced by placeholders like `<token>` |
+| Branding | Title, version, logo and accent colour (docs settings) |
+
+**Publishing** (Docs → **Publish**; nothing is uploaded anywhere)
+
+| Output | Notes |
+|---|---|
+| Static site (folder) | `index.html` + `assets/`: three-column layout, search, dark/light, language switcher, mobile-friendly; works from `file://`, an intranet server or GitHub Pages. Re-publishing only touches files Localpost wrote (listed in `.localpost-docs.json`) |
+| Single HTML file | Everything inlined |
+| Markdown (folder) | `README.md`, one file per top-level folder and guide page; request links become relative links |
+| Print / Save as PDF | Opens a print-styled page in your browser |
+| OpenAPI 3.1 | YAML or JSON |
+| Live docs server | Docs → Publish → *Serve locally*: the site on `127.0.0.1`, rebuilt as you edit (optionally shared on your network) |
+| Docs in git | Linked collections can also write Markdown docs to `api-docs/` (docs settings) |
+| CLI | `localpost docs <collection> -o docs [--format site\|html\|markdown\|openapi]` |
+| Leak check | Credential-like text in descriptions, pages and examples (JWTs, API keys, passwords…) is flagged before publishing, with the option to redact it |
+
+**Keeping docs accurate**
+
+| Feature | Notes |
+|---|---|
+| Checks | Docs → **Checks**: missing descriptions and examples, undocumented parameters and path variables, invalid schemas, examples that don't match their schema, broken request links, empty pages, secrets. Click to jump to the fix |
+| Update examples from a run | Runner → **Update examples**: saves each request's latest response per status code (names, descriptions and schemas are kept); also *Update example* in a response's ⋯ menu |
+| Drift checks | Runner toggle *Check responses against the docs* / CLI `run --docs-drift`: every response is validated against the documented schema (or a relaxed schema inferred from the example) and undocumented status codes fail, as ordinary test results |
+| Versions and changelog | Docs → **Versions**: save snapshots, then compare the collection with a snapshot or another file (Postman, OpenAPI, backup) to list added, removed and changed endpoints, with likely breaking changes flagged; add the result as an "API changes" page |
+| CI | `localpost docs <collection> --check` exits 1 on errors (`--strict`: on warnings too) |
 
 ## Dev toolbox
 

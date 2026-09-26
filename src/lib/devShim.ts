@@ -28,6 +28,12 @@ export async function devInvoke<T>(cmd: string, args: any = {}): Promise<T> {
       return undefined as T;
     }
     case "load_start": return (await devLoad(args.config)) as T;
+    case "docs_open_page": {
+      // Browser preview: show the generated page in a new tab instead of the system browser.
+      const url = URL.createObjectURL(new Blob([args.content], { type: "text/html" }));
+      window.open(url, "_blank");
+      return url as T;
+    }
     case "load_stop": loadStops.add(args.id); return undefined as T;
     case "ws_close": sockets.get(args.id)?.close(args.code ?? 1000, args.reason ?? ""); return undefined as T;
     default: throw new Error(`${cmd} is not available in browser preview`);

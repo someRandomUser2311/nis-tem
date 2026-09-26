@@ -55,6 +55,8 @@ export interface Scopes {
   environment: VarScope;
   data: VarScope;
   local: VarScope;
+  /** Leave `{{$dynamic}}` variables as written (docs output must be stable). */
+  keepDynamic?: boolean;
 }
 
 export const emptyScopes = (): Scopes => ({
@@ -73,7 +75,7 @@ export function lookup(scopes: Scopes, key: string): string | undefined {
 /** Where a variable resolves from — used for hover tooltips / highlighting. */
 export function lookupSource(scopes: Scopes, key: string): { value: string; scope: string } | undefined {
   if (key.startsWith("$") && DYNAMIC[key]) return { value: "(dynamic)", scope: "Dynamic" };
-  const order: [keyof Scopes, string][] = [
+  const order: [Exclude<keyof Scopes, "keepDynamic">, string][] = [
     ["local", "Local"], ["data", "Data"], ["environment", "Environment"], ["collection", "Collection"], ["globals", "Global"],
   ];
   for (const [k, label] of order) {
@@ -88,7 +90,7 @@ export function resolve(input: string, scopes: Scopes, depth = 0): string {
   if (!input || depth > 8 || !input.includes("{{")) return input;
   const out = input.replace(VAR_RE, (match, name: string) => {
     if (name.startsWith("$")) {
-      const gen = DYNAMIC[name];
+      const gen = scopes.keepDynamic ? undefined : DYNAMIC[name];
       return gen ? gen() : match;
     }
     const v = lookup(scopes, name);

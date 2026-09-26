@@ -15,6 +15,21 @@ export interface KV {
   secret?: boolean;
   /** On disk only: the value lives in the OS keychain (see Settings → Data). */
   inKeychain?: boolean;
+  /** API documentation details for params, headers and form fields. */
+  doc?: ParamDoc;
+}
+
+export type ParamType = "string" | "integer" | "number" | "boolean" | "array" | "object";
+
+export interface ParamDoc {
+  required?: boolean;
+  type?: ParamType;
+  /** e.g. date-time, uuid, email. */
+  format?: string;
+  enum?: string[];
+  default?: string;
+  example?: string;
+  deprecated?: boolean;
 }
 
 export type AuthType = "inherit" | "none" | "basic" | "bearer" | "apikey" | "oauth2" | "digest" | "awsv4" | "hawk";
@@ -95,6 +110,42 @@ export interface Example {
   bodyBase64?: string | null;
   /** The request that produced it; the mock server matches on this method and URL. */
   request?: { method: string; url: string };
+  /** Docs: Markdown description, whether it is the one shown first, and a JSON Schema for it. */
+  description?: string;
+  default?: boolean;
+  schema?: string;
+}
+
+export type DocStatus = "stable" | "beta" | "deprecated";
+
+/** How a request appears in the generated API documentation. */
+export interface RequestDocs {
+  hidden?: boolean;
+  status?: DocStatus;
+  tags?: string[];
+  /** JSON Schema of the request body. */
+  bodySchema?: string;
+}
+
+/** A standalone Markdown page in a collection's documentation (Getting started, Errors…). */
+export interface DocPage {
+  id: string;
+  title: string;
+  body: string;
+}
+
+export interface DocsConfig {
+  title?: string;
+  /** Image as a data: URI. */
+  logo?: string;
+  accent?: string;
+  /** Environment whose (non-secret) values fill `{{vars}}` in URLs and samples. */
+  environmentId?: string;
+  /** Code sample languages (ids from lib/codegen LANGUAGES); default: a common subset. */
+  languages?: string[];
+  version?: string;
+  /** Linked collections: also write Markdown docs to `api-docs/` in the folder. */
+  linkedMarkdown?: boolean;
 }
 
 export type Protocol = "http" | "ws" | "sse";
@@ -134,6 +185,7 @@ export interface RequestItem {
   /** JSON Schema every response is checked against (shown in Test Results). */
   responseSchema?: string;
   ws?: WsConfig;
+  docs?: RequestDocs;
 }
 
 export interface FolderItem {
@@ -145,6 +197,7 @@ export interface FolderItem {
   preRequestScript: string;
   testScript: string;
   description: string;
+  docs?: { hidden?: boolean };
 }
 
 export type Item = RequestItem | FolderItem;
@@ -160,6 +213,9 @@ export interface Collection {
   preRequestScript: string;
   testScript: string;
   description: string;
+  /** Guide pages shown before the endpoints in the docs. */
+  pages?: DocPage[];
+  docsConfig?: DocsConfig;
 }
 
 export interface Environment {
@@ -223,7 +279,7 @@ export interface SavedRef {
   itemId: string;
 }
 
-export type TabKind = "request" | "collection" | "folder" | "environment" | "runner" | "globals" | "example" | "server" | "loadtest" | "tool";
+export type TabKind = "request" | "collection" | "folder" | "environment" | "runner" | "globals" | "example" | "server" | "loadtest" | "tool" | "docs";
 
 export interface Tab {
   id: string;
@@ -279,9 +335,9 @@ export interface LiveState {
 /** A mock server or webhook catcher definition (persisted; whether it's running is not). */
 export interface ServerDef {
   id: string;
-  kind: "mock" | "catcher";
+  kind: "mock" | "catcher" | "docs";
   name: string;
-  /** Mock: the collection whose examples it serves. */
+  /** Mock: the collection whose examples it serves. Docs: the collection whose docs it serves. */
   collectionId?: string;
   port: number;
   delayMs: number;

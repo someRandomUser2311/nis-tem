@@ -79,10 +79,10 @@ export function BodyEditor({ body, onChange, requestId, onFetchSchema }: {
           <CodeEditor value={body.raw} onChange={(raw) => onChange({ ...body, raw })} language={body.rawLanguage === "text" ? "text" : body.rawLanguage} variables />
         )}
         {body.mode === "urlencoded" && (
-          <KeyValueTable rows={body.urlencoded} onChange={(urlencoded) => onChange({ ...body, urlencoded })} />
+          <KeyValueTable rows={body.urlencoded} onChange={(urlencoded) => onChange({ ...body, urlencoded })} docs />
         )}
         {body.mode === "formdata" && (
-          <KeyValueTable rows={body.formdata} onChange={(formdata) => onChange({ ...body, formdata })} variant="formdata" />
+          <KeyValueTable rows={body.formdata} onChange={(formdata) => onChange({ ...body, formdata })} variant="formdata" docs />
         )}
         {body.mode === "binary" && (
           <div className="binary-pick">

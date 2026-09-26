@@ -9,7 +9,7 @@ export interface Finding {
 
 /** A value that is only a `{{variable}}` reference isn't a secret itself. */
 const literal = (v: string | undefined) => !!v && !/^\s*\{\{[^{}]+\}\}\s*$/.test(v);
-const SENSITIVE_HEADER = /^(authorization|proxy-authorization|cookie|x-api-key|api-key|x-auth-token)$|token|secret|password|session/i;
+export const SENSITIVE_HEADER = /^(authorization|proxy-authorization|cookie|x-api-key|api-key|x-auth-token)$|token|secret|password|session/i;
 
 type Field = [string, () => string | undefined, (v: string) => void];
 
@@ -91,4 +91,52 @@ export function summarize(findings: Finding[], max = 6): string {
   const lines = findings.slice(0, max).map((f) => `• ${f.what} (${f.where})`);
   if (findings.length > max) lines.push(`• …and ${findings.length - max} more`);
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------- published docs
+
+/** Credential-looking strings in free text (examples, pages, descriptions). */
+const TOKEN_PATTERNS: [RegExp, string][] = [
+  [/\beyJ[\w-]{8,}\.eyJ[\w-]{8,}\.[\w-]{8,}/g, "JWT"],
+  [/\bAKIA[0-9A-Z]{16}\b/g, "AWS access key"],
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "private key"],
+  [/\b(ghp|gho|ghu|ghs|github_pat)_[A-Za-z0-9_]{20,}\b/g, "GitHub token"],
+  [/\bxox[abposr]-[A-Za-z0-9-]{10,}\b/g, "Slack token"],
+  [/\b(sk|rk)_live_[A-Za-z0-9]{16,}\b/g, "Stripe live key"],
+  [/\bAIza[0-9A-Za-z_-]{35}\b/g, "Google API key"],
+  [/\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/gi, "password in URL"],
+  [/(["']?(?:password|passwd|secret|api[_-]?key|access[_-]?token|client[_-]?secret)["']?\s*[:=]\s*["'])([^"'{}<\s][^"']{5,})(["'])/gi, "secret value"],
+];
+
+/**
+ * Scan the text that would be published as docs; with `redact`, return a copy of the value where
+ * every match is replaced by `<redacted>`. Works on any JSON-like value (the docs model).
+ */
+export function scanDocsText<T>(value: T, redact = false): { findings: Finding[]; cleaned: T } {
+  const findings: Finding[] = [];
+  const seen = new Set<string>();
+  const walk = (v: unknown, where: string): unknown => {
+    if (typeof v === "string") {
+      let out = v;
+      for (const [re, what] of TOKEN_PATTERNS) {
+        re.lastIndex = 0;
+        if (re.test(out)) {
+          const key = `${what}@${where}`;
+          if (!seen.has(key)) { seen.add(key); findings.push({ where, what }); }
+          if (redact) out = out.replace(re, (m, a, _b, c) => (what === "secret value" ? `${a}<redacted>${c}` : what === "password in URL" ? m.replace(/:[^:@/]+@$/, ":<redacted>@") : "<redacted>"));
+        }
+        re.lastIndex = 0;
+      }
+      return out;
+    }
+    if (Array.isArray(v)) return v.map((x) => walk(x, where));
+    if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      const here = typeof o.name === "string" ? `${where} / ${o.name}` : typeof o.title === "string" ? `${where} / ${o.title}` : where;
+      return Object.fromEntries(Object.entries(o).map(([k, x]) => [k, k === "id" || k === "anchor" || k === "anchors" ? x : walk(x, here)]));
+    }
+    return v;
+  };
+  const cleaned = walk(value, "Docs") as T;
+  return { findings, cleaned: redact ? cleaned : value };
 }

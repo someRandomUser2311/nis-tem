@@ -53,17 +53,32 @@ export const newCollection = (name = "New Collection"): Collection => ({
 
 export const clone = <T,>(v: T): T => structuredClone(v);
 
-/** Deep-clone an item giving it (and all descendants) fresh ids. */
-export function cloneWithNewIds<T extends Item>(item: T): T {
+/**
+ * Deep-clone an item giving it (and all descendants) fresh ids. Docs links (`#req:<id>`) inside
+ * the copy follow the new ids; pass `ids` to share the old → new map across several clones.
+ */
+export function cloneWithNewIds<T extends Item>(item: T, ids = new Map<string, string>()): T {
   const c = clone(item);
+  const all: Item[] = [];
   const walk = (i: Item) => {
-    i.id = uid();
+    const id = uid();
+    ids.set(i.id, id);
+    i.id = id;
+    all.push(i);
     if (i.type === "folder") i.items.forEach(walk);
     else i.examples?.forEach((e) => { e.id = uid(); });
   };
   walk(c);
+  for (const i of all) {
+    i.description = remapRequestLinks(i.description, ids);
+    if (i.type === "request") i.examples?.forEach((e) => { if (e.description) e.description = remapRequestLinks(e.description, ids); });
+  }
   return c;
 }
+
+/** Point `#req:<old>` links at the new ids of copied requests. */
+export const remapRequestLinks = (text: string, ids: Map<string, string>) =>
+  text.includes("#req:") ? text.replace(/#req:([\w-]+)/g, (m, id: string) => (ids.has(id) ? `#req:${ids.get(id)}` : m)) : text;
 
 // ---------- tree helpers ----------
 

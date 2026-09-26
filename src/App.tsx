@@ -11,6 +11,7 @@ import { ExampleView } from "./components/ExampleView";
 import { ServerView } from "./components/ServerViews";
 import { LoadTestView } from "./components/LoadTestView";
 import { ToolView } from "./components/tools";
+import { DocsView } from "./components/docs/DocsView";
 import { Sidebar } from "./components/Sidebar";
 import { requestCloseTab, TabBar } from "./components/TabBar";
 import { Empty, Icon, MenuHost, Splitter } from "./components/ui";
@@ -30,6 +31,7 @@ function TabContent({ tab }: { tab: Tab }) {
     case "server": return <ServerView tab={tab} />;
     case "loadtest": return <VarProvider collectionId={tab.saved?.collectionId}><LoadTestView tab={tab} /></VarProvider>;
     case "tool": return <ToolView tab={tab} />;
+    case "docs": return <DocsView tab={tab} />;
   }
 }
 

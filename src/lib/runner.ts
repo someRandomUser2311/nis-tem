@@ -2,6 +2,7 @@ import type { Collection, RequestItem, TestResult } from "../types";
 import { buildScopes, commitScopes, log, refreshTokenIfExpired, useStore } from "../store";
 import { executeRequest } from "./engine";
 import { findPath, uid } from "./utils";
+import { docsDrift } from "./docs/drift";
 import { api } from "./api";
 
 export interface RunConfig {
@@ -12,7 +13,21 @@ export interface RunConfig {
   data: Record<string, unknown>[];
   persistVariables: boolean;
   stopOnError: boolean;
+  /** Add "Docs: …" checks comparing each response with its documented schema / examples. */
+  checkDocs?: boolean;
+  /** Keep each response (body capped at 1 MB) on its entry, for "Update examples from this run". */
+  keepResponses?: boolean;
 }
+
+/** A response kept on a run entry. */
+export interface RunResponse {
+  status: number;
+  statusText: string;
+  headers: { key: string; value: string }[];
+  body: string;
+}
+
+const MAX_KEPT_BODY = 1024 * 1024;
 
 export interface RunEntry {
   id: string;
@@ -27,6 +42,7 @@ export interface RunEntry {
   size?: number;
   error?: string;
   tests: TestResult[];
+  response?: RunResponse;
 }
 
 export interface RunHandle {
@@ -75,11 +91,15 @@ export function startRun(cfg: RunConfig, onEntry: (e: RunEntry) => void, onProgr
         });
         currentNativeId = null;
         if (cancelled) break outer;
+        if (cfg.checkDocs && result.response) result.tests.push(...docsDrift(req, result.response));
+        const res = result.response;
 
         onEntry({
           id: uid(), iteration: it, requestId: req.id, name: req.name, method: result.resolvedMethod, url: result.resolvedUrl,
           status: result.response?.status, statusText: result.response?.statusText, timeMs: result.response?.timeMs,
           size: result.response?.size, error: result.error, tests: result.tests,
+          ...(cfg.keepResponses && res && !res.isBinary && res.bodyText.length <= MAX_KEPT_BODY
+            ? { response: { status: res.status, statusText: res.statusText, headers: res.headers, body: res.bodyText } } : {}),
         });
 
         if (cfg.stopOnError && (result.error || result.tests.some((t) => !t.passed))) { log("warn", "Run stopped: error or failed test"); break outer; }

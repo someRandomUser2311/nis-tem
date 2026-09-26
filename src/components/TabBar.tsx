@@ -31,10 +31,11 @@ export function useTabTitle(tab: Tab): { title: string; icon?: string; method?: 
       return { title: ex?.name ?? "Example", icon: "example" };
     }
     case "loadtest": return { title: `Load · ${tab.draft?.name ?? "request"}`, icon: "gauge" };
+    case "docs": return { title: `Docs · ${collections.find((x) => x.id === tab.collectionId)?.name ?? ""}`, icon: "docs" };
     case "tool": { const t = toolById(tab.toolId); return { title: t?.name ?? "Tool", icon: t?.icon ?? "tools" }; }
     case "server": {
       const d = servers.find((x) => x.id === tab.serverId);
-      return { title: d?.name ?? "Server", icon: d?.kind === "catcher" ? "inbox" : "server" };
+      return { title: d?.name ?? "Server", icon: d?.kind === "catcher" ? "inbox" : d?.kind === "docs" ? "docs" : "server" };
     }
   }
 }

@@ -4,7 +4,7 @@ import { flattenRequests, formatMs, methodColor, requestBadge, statusColor } fro
 import {
   addFolder, addRequestTo, clearHistory, confirmDialog, createCollection, deleteExample, duplicateExample, updateExample, createEnvironment, deleteCollection, deleteEnvironment,
   deleteHistory, deleteItem, duplicateCollection, duplicateEnvironment, duplicateItem, moveItem, newRequestTab, openHistoryEntry, openModal,
-  openRequest, openSpecialTab, reloadLinked, setActiveEnvironment, setSidebarView, togglePinned, unlinkCollection, updateCollection, updateEnvironment, updateItem, useStore,
+  openDocs, openRequest, openSpecialTab, reloadLinked, setActiveEnvironment, setSidebarView, togglePinned, unlinkCollection, updateCollection, updateEnvironment, updateItem, useStore,
   type SidebarView,
 } from "../store";
 import { EditableText, Empty, Icon, IconButton, menuFromEvent, type MenuItem } from "./ui";
@@ -87,6 +87,7 @@ function CollectionsPanel() {
     { label: "Add folder", onClick: () => { toggle(c.id, true); const f = addFolder(c.id, null, "New Folder"); setRenaming(f.id); } },
     { divider: true },
     { label: "Run collection", onClick: () => openSpecialTab("runner", { collectionId: c.id }) },
+    { label: "View documentation", onClick: () => openDocs(c.id) },
     { label: "Mock server…", onClick: () => openMockFor(c.id) },
     { label: "Overview & settings", onClick: () => openSpecialTab("collection", { collectionId: c.id }) },
     { divider: true },

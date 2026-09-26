@@ -1,6 +1,6 @@
 // Importers for formats other than Postman: OpenAPI 3.x / Swagger 2, HAR, Insomnia v4, Hoppscotch
 // and Bruno. Each returns the internal model; detection lives in importexport.ts.
-import type { Auth, Body, Collection, Environment, Example, FolderItem, Item, KV, RawLanguage, RequestItem } from "../types";
+import type { Auth, Body, Collection, Environment, Example, FolderItem, Item, KV, ParamDoc, RawLanguage, RequestItem } from "../types";
 import { defaultBody, defaultAuth, kv, newCollection, newFolder, newRequest, parseQuery, uid } from "./utils";
 import { defaultOAuth2 } from "./oauth";
 
@@ -101,10 +101,50 @@ function openapiAuth(doc: Doc, security: any[] | undefined, vars: KV[]): Auth | 
   return auth;
 }
 
+/**
+ * A standalone copy of a schema with `$ref`s resolved against the document (recursive refs are
+ * left as `$ref` once seen), so it can be stored on a request and rendered on its own.
+ */
+export function inlineSchema(doc: Doc, schema: any, seen = new Set<string>(), depth = 0): any {
+  if (!schema || typeof schema !== "object" || depth > 20) return schema;
+  if (Array.isArray(schema)) return schema.map((s) => inlineSchema(doc, s, seen, depth + 1));
+  if (typeof schema.$ref === "string") {
+    if (seen.has(schema.$ref)) return { $ref: schema.$ref };
+    const target = deref(doc, schema);
+    return target === schema ? schema : inlineSchema(doc, target, new Set(seen).add(schema.$ref), depth + 1);
+  }
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(schema)) {
+    if (k === "example" || k === "examples" || k === "xml") continue;
+    out[k] = k === "properties" && v && typeof v === "object"
+      ? Object.fromEntries(Object.entries(v as Record<string, any>).map(([pk, pv]) => [pk, inlineSchema(doc, pv, seen, depth + 1)]))
+      : typeof v === "object" ? inlineSchema(doc, v, seen, depth + 1) : v;
+  }
+  return out;
+}
+
+const schemaText = (doc: Doc, schema: any) => (schema && typeof schema === "object" ? JSON.stringify(inlineSchema(doc, schema), null, 2) : undefined);
+
+/** OpenAPI parameter → docs details (required, type, format, enum, default, deprecated). */
+function paramDoc(p: any): ParamDoc | undefined {
+  const sch = p.schema ?? p;
+  const type = Array.isArray(sch.type) ? sch.type.find((t: string) => t !== "null") : sch.type;
+  const d: ParamDoc = {
+    ...(p.required && p.in !== "path" ? { required: true } : {}),
+    ...(["string", "integer", "number", "boolean", "array", "object"].includes(type) ? { type } : {}),
+    ...(sch.format ? { format: String(sch.format) } : {}),
+    ...(Array.isArray(sch.enum) ? { enum: sch.enum.map(String) } : {}),
+    ...(sch.default !== undefined ? { default: String(sch.default) } : {}),
+    ...(p.deprecated ? { deprecated: true } : {}),
+  };
+  return Object.keys(d).length ? d : undefined;
+}
+
 export function importOpenApi(doc: Doc): Collection {
   const isSwagger = typeof doc.swagger === "string";
   const col = newCollection(doc.info?.title ?? "Imported API");
-  col.description = [doc.info?.description, doc.info?.version ? `Version ${doc.info.version}` : ""].filter(Boolean).join("\n\n");
+  col.description = doc.info?.description ?? "";
+  if (doc.info?.version) col.docsConfig = { version: String(doc.info.version) };
   let baseUrl = "";
   if (isSwagger) {
     const scheme = doc.schemes?.[0] ?? "https";
@@ -139,9 +179,10 @@ export function importOpenApi(doc: Doc): Collection {
         const v = p.example ?? p.schema?.example ?? p.default ?? p.schema?.default ?? (p.schema?.enum ?? p.enum)?.[0];
         return v === undefined ? "" : String(v);
       };
-      const query = params.filter((p) => p.in === "query").map((p) => kv(p.name, paramExample(p), { enabled: !!p.required, description: p.description ?? "" }));
-      const headers = params.filter((p) => p.in === "header").map((p) => kv(p.name, paramExample(p), { description: p.description ?? "" }));
-      const pathVars = params.filter((p) => p.in === "path").map((p) => kv(p.name, paramExample(p), { description: p.description ?? "" }));
+      const withDoc = (p: any, extra: Partial<KV> = {}) => { const d = paramDoc(p); return kv(p.name, paramExample(p), { description: p.description ?? "", ...(d ? { doc: d } : {}), ...extra }); };
+      const query = params.filter((p) => p.in === "query").map((p) => withDoc(p, { enabled: !!p.required }));
+      const headers = params.filter((p) => p.in === "header").map((p) => withDoc(p));
+      const pathVars = params.filter((p) => p.in === "path").map((p) => withDoc(p));
 
       const body: Body = defaultBody();
       const mediaTypes: Record<string, any> = isSwagger
@@ -159,9 +200,16 @@ export function importOpenApi(doc: Doc): Collection {
         const example = media?.example ?? (media?.examples ? deref(doc, Object.values<any>(media.examples)[0])?.value : undefined) ?? exampleFromSchema(doc, media?.schema);
         if (/x-www-form-urlencoded|multipart/.test(mime)) {
           const schema = deref(doc, media?.schema) ?? {};
-          const rows = Object.entries<any>(schema.properties ?? {}).map(([k, s]) => kv(k, String(exampleFromSchema(doc, s) ?? ""), {
-            type: s.format === "binary" || s.type === "file" ? "file" : "text",
-          }));
+          const required = new Set<string>(Array.isArray(schema.required) ? schema.required : []);
+          const rows = Object.entries<any>(schema.properties ?? {}).map(([k, raw]) => {
+            const s = deref(doc, raw) ?? {};
+            const d = paramDoc({ ...s, schema: s, required: required.has(k) || s.required === true });
+            return kv(k, String(exampleFromSchema(doc, s) ?? ""), {
+              type: s.format === "binary" || s.type === "file" ? "file" : "text",
+              description: s.description ?? "",
+              ...(d ? { doc: d } : {}),
+            });
+          });
           if (mime.includes("multipart")) { body.mode = "formdata"; body.formdata = rows; } else { body.mode = "urlencoded"; body.urlencoded = rows; }
         } else {
           body.mode = "raw";
@@ -180,8 +228,15 @@ export function importOpenApi(doc: Doc): Collection {
         headers,
         pathVariables: pathVars,
         body,
-        description: [op.description, op.deprecated ? "**Deprecated.**" : ""].filter(Boolean).join("\n\n"),
+        description: op.description ?? "",
       });
+      const bodySchema = mime && !/x-www-form-urlencoded|multipart/.test(mime) ? schemaText(doc, media?.schema) : undefined;
+      const docs = {
+        ...(op.deprecated ? { status: "deprecated" as const } : {}),
+        ...((op.tags?.length ?? 0) > 1 ? { tags: op.tags.slice(1).map(String) } : {}),
+        ...(bodySchema ? { bodySchema } : {}),
+      };
+      if (Object.keys(docs).length) req.docs = docs;
       if (op.security) {
         const a = op.security.length === 0 ? defaultAuth("none") : openapiAuth(doc, op.security, col.variables);
         if (a) req.auth = a;
@@ -196,12 +251,17 @@ export function importOpenApi(doc: Doc): Collection {
         const content = isSwagger ? (resp.schema || resp.examples ? { [(op.produces ?? doc.produces ?? ["application/json"])[0]]: { schema: resp.schema, example: resp.examples ? Object.values(resp.examples)[0] : undefined } } : {}) : resp.content ?? {};
         const [rmime, rmedia] = Object.entries<any>(content)[0] ?? [];
         const value = rmedia ? rmedia.example ?? (rmedia.examples ? deref(doc, Object.values<any>(rmedia.examples)[0])?.value : undefined) ?? exampleFromSchema(doc, rmedia.schema) : undefined;
+        const schema = schemaText(doc, rmedia?.schema);
+        if (schema && status >= 200 && status < 300 && !req.responseSchema) req.responseSchema = schema;
         if (value === undefined && !resp.description) continue;
         examples.push({
           id: uid(), name: resp.description ? `${status} ${resp.description}`.slice(0, 80) : String(status), status,
           headers: rmime ? [{ key: "Content-Type", value: rmime }] : [],
           body: value === undefined || value === null ? "" : typeof value === "string" ? value : JSON.stringify(value, null, 2),
           request: { method: req.method, url: req.url },
+          ...(resp.description && resp.description.length > 80 ? { description: resp.description } : {}),
+          // Schemas that differ from the success schema (e.g. error bodies) stay on the example.
+          ...(schema && schema !== req.responseSchema ? { schema } : {}),
         });
       }
       if (examples.length) req.examples = examples;

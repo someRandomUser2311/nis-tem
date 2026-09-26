@@ -52,11 +52,53 @@ pub struct FixedResponse {
     pub body: String,
 }
 
+/// A file of a docs site served by a `Docs` server.
+#[derive(Deserialize, Clone, Debug)]
+pub struct ServedFile {
+    pub path: String,
+    pub content: String,
+}
+
 #[derive(Deserialize, Clone, Debug)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Mode {
     Mock { routes: Vec<MockRoute> },
     Catcher { response: FixedResponse },
+    /// Live API docs: a static site kept in memory and replaced as the collection changes.
+    Docs { files: Vec<ServedFile> },
+}
+
+fn content_type(path: &str) -> &'static str {
+    match path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str() {
+        "html" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" => "text/javascript; charset=utf-8",
+        "json" => "application/json",
+        "svg" => "image/svg+xml",
+        "md" => "text/markdown; charset=utf-8",
+        _ => "text/plain; charset=utf-8",
+    }
+}
+
+/// Answer a docs-site request from the in-memory files (`/` → `index.html`).
+fn serve_docs(files: &[ServedFile], method: &Method, path: &str) -> (u16, Response<Body>) {
+    let hs = |ct: &str| vec![
+        KeyValue { key: "content-type".into(), value: ct.into() },
+        KeyValue { key: "cache-control".into(), value: "no-cache".into() },
+        KeyValue { key: "x-content-type-options".into(), value: "nosniff".into() },
+    ];
+    if method != Method::GET && method != Method::HEAD {
+        return (405, build_response(405, &hs("text/plain; charset=utf-8"), b"Method not allowed".to_vec(), false));
+    }
+    let rel = decode(path.trim_start_matches('/'));
+    let rel = if rel.is_empty() || rel.ends_with('/') { format!("{rel}index.html") } else { rel };
+    match files.iter().find(|f| f.path == rel) {
+        Some(f) => {
+            let body = if method == Method::HEAD { Vec::new() } else { f.content.clone().into_bytes() };
+            (200, build_response(200, &hs(content_type(&f.path)), body, false))
+        }
+        None => (404, build_response(404, &hs("text/plain; charset=utf-8"), b"Not found".to_vec(), false)),
+    }
 }
 
 #[derive(Deserialize)]
@@ -294,7 +336,17 @@ async fn handle(AxState(ctx): AxState<Arc<Ctx>>, axum::extract::ConnectInfo(remo
     let path = parts.uri.path().to_string();
     let query = parts.uri.query().unwrap_or("").to_string();
 
-    let (status, matched, response) = if ctx.cors && parts.method == Method::OPTIONS && parts.headers.contains_key("access-control-request-method") {
+    // Docs sites can be large: answer from the lock instead of cloning the mode.
+    let docs = {
+        let mode = ctx.mode.read().unwrap();
+        match &*mode {
+            Mode::Docs { files } => Some(serve_docs(files, &parts.method, &path)),
+            _ => None,
+        }
+    };
+    let (status, matched, response) = if let Some((status, response)) = docs {
+        (status, None, response)
+    } else if ctx.cors && parts.method == Method::OPTIONS && parts.headers.contains_key("access-control-request-method") {
         (204, None, build_response(204, &[], Vec::new(), true))
     } else {
         let mode = ctx.mode.read().unwrap().clone();
@@ -323,6 +375,7 @@ async fn handle(AxState(ctx): AxState<Arc<Ctx>>, axum::extract::ConnectInfo(remo
                 None,
                 build_response(response.status, &response.headers, response.body.into_bytes(), ctx.cors),
             ),
+            Mode::Docs { .. } => unreachable!("handled above"),
         }
     };
 
@@ -503,6 +556,31 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn docs_server_serves_and_updates_the_site() {
+        let emit: Emit = Arc::new(|_| {});
+        let files = |title: &str| vec![
+            ServedFile { path: "index.html".into(), content: format!("<h1>{title}</h1>") },
+            ServedFile { path: "assets/docs.css".into(), content: "body{}".into() },
+        ];
+        let srv = start(ServerConfig { id: "d".into(), port: 0, delay_ms: 0, cors: false, allow_lan: false, mode: Mode::Docs { files: files("v1") } }, emit)
+            .await
+            .unwrap();
+        let port = srv.info.port;
+        let get = move |req: &'static str| tokio::task::spawn_blocking(move || raw_request(port, req));
+        let out = get("GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n").await.unwrap();
+        assert!(out.starts_with("HTTP/1.1 200") && out.contains("text/html") && out.contains("no-cache") && out.ends_with("<h1>v1</h1>"), "{out}");
+        let out = get("GET /assets/docs.css HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n").await.unwrap();
+        assert!(out.contains("text/css") && out.ends_with("body{}"));
+        let out = get("GET /../secret HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n").await.unwrap();
+        assert!(out.starts_with("HTTP/1.1 404"));
+        let out = get("POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+        assert!(out.starts_with("HTTP/1.1 405"));
+        *srv.ctx.mode.write().unwrap() = Mode::Docs { files: files("v2") };
+        let out = get("GET /index.html HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n").await.unwrap();
+        assert!(out.ends_with("<h1>v2</h1>"));
+    }
+
+    #[tokio::test]
     async fn mock_and_catcher_serve_and_report() {
         let seen: Arc<Mutex<Vec<ServerEvent>>> = Arc::default();
         let sink = seen.clone();

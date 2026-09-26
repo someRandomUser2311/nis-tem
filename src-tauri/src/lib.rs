@@ -1,3 +1,4 @@
+mod docs;
 mod http;
 mod linked;
 mod load;
@@ -117,6 +118,8 @@ pub fn run() {
             servers::server_stop,
             servers::server_update,
             servers::server_list,
+            docs::docs_write,
+            docs::docs_open_page,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Localpost");

@@ -4,6 +4,7 @@ import type { KV } from "../types";
 import { uid } from "../lib/utils";
 import { Icon, IconButton } from "./ui";
 import { VarInput } from "./VarInput";
+import { ParamDocChips, ParamDocPopover } from "./docs/ParamDocPopover";
 
 interface Props {
   rows: KV[];
@@ -15,6 +16,8 @@ interface Props {
   /** Extra read-only rows (e.g. auto-generated headers) shown above. */
   readonlyRows?: { key: string; value: string; note?: string }[];
   allowBulk?: boolean;
+  /** Show per-row API docs details (required, type, enum…). */
+  docs?: boolean;
 }
 
 function toBulk(rows: KV[]) {
@@ -33,7 +36,8 @@ function fromBulk(text: string, old: KV[]): KV[] {
   });
 }
 
-export function KeyValueTable({ rows, onChange, variant = "default", keyPlaceholder = "Key", valuePlaceholder = "Value", title, readonlyRows, allowBulk = true }: Props) {
+export function KeyValueTable({ rows, onChange, variant = "default", keyPlaceholder = "Key", valuePlaceholder = "Value", title, readonlyRows, allowBulk = true, docs }: Props) {
+  const [docFor, setDocFor] = useState<{ id: string; el: HTMLElement } | null>(null);
   const [ghostId, setGhostId] = useState(uid);
   const [bulk, setBulk] = useState(false);
   const [bulkText, setBulkText] = useState("");
@@ -120,6 +124,7 @@ export function KeyValueTable({ rows, onChange, variant = "default", keyPlacehol
                 <td>
                   <div className="kv-cell">
                     <VarInput value={r.key} onChange={(v) => update(r.id, { key: v })} placeholder={keyPlaceholder} />
+                    {docs && <ParamDocChips doc={r.doc} />}
                     {variant === "formdata" && (
                       <select
                         className="kv-type"
@@ -173,6 +178,10 @@ export function KeyValueTable({ rows, onChange, variant = "default", keyPlacehol
                           )}
                         </>
                       )}
+                      {docs && (
+                        <IconButton icon="docs" size={12} title="Docs details (required, type, allowed values…)" active={!!r.doc}
+                          className={r.doc ? "" : "kv-del"} onClick={(e) => setDocFor(docFor?.id === r.id ? null : { id: r.id, el: e.currentTarget })} />
+                      )}
                       <IconButton icon="trash" title="Delete" onClick={() => remove(r.id)} size={12} className="kv-del" />
                     </>
                   )}
@@ -182,6 +191,10 @@ export function KeyValueTable({ rows, onChange, variant = "default", keyPlacehol
           </tbody>
         </table>
       )}
+      {docFor && (() => {
+        const row = rows.find((r) => r.id === docFor.id);
+        return row ? <ParamDocPopover anchor={docFor.el} name={row.key} doc={row.doc} onChange={(doc) => update(row.id, { doc })} onClose={() => setDocFor(null)} /> : null;
+      })()}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import {
-  DEFAULT_SETTINGS, migrateSettings, type Collection, type ConsoleEntry, type Environment, type Example, type FolderItem, type HistoryEntry,
+  DEFAULT_SETTINGS, migrateSettings, type Collection, type ConsoleEntry, type DocPage, type DocsConfig, type Environment, type Example, type FolderItem, type HistoryEntry,
   type Item, type KV, type LiveMessage, type LiveState, type LoadConfigInput, type LoadEvent, type OAuth2Config, type OAuth2Token, type RequestItem, type RunResult, type ServerDef, type ServerEvent, type Settings, type Tab, type TabKind,
 } from "./types";
 import { onEvent } from "./lib/events";
@@ -8,12 +8,17 @@ import { compileRoutes, nativeRoutes } from "./lib/mock";
 import { api } from "./lib/api";
 import { effectiveAuth, executeRequest, nativeOptions, prepareRequest, signRequest } from "./lib/engine";
 import { SseParser } from "./lib/sse";
-import { collectionToFiles, filesSignature, filesToCollection } from "./lib/linked";
+import { collectionToFiles, filesSignature, filesToCollection, LINKED_FILE } from "./lib/linked";
+import { buildDocsModel, type DocsModel } from "./lib/docs/model";
+import { buildSite } from "./lib/docs/site";
+import { buildMarkdownDocs } from "./lib/docs/markdown-export";
+import { loadMermaidJs, needsMermaid } from "./lib/docs/mermaid-asset";
+import { scanCollection, scanDocsText } from "./lib/leaks";
 import { getNewToken, oauthConfig, refreshToken, tokenExpired } from "./lib/oauth";
 import { INTROSPECTION_QUERY, schemaFromResponse, setSchemaState, useSchemas } from "./lib/graphql";
 import { resolve as resolveVars, VarScope, type Scopes } from "./lib/vars";
 import {
-  clone, cloneWithNewIds, containsId, findItem, findPath, newCollection, newFolder, newRequest, removeItem, uid,
+  clone, cloneWithNewIds, containsId, findItem, findPath, newCollection, newFolder, newRequest, remapRequestLinks, removeItem, tryPrettyJson, uid,
 } from "./lib/utils";
 
 export type SidebarView = "collections" | "environments" | "history" | "servers" | "tools";
@@ -156,6 +161,11 @@ export async function initStore() {
   useStore.subscribe((state, prev) => {
     if (state.collections === prev.collections) return;
     for (const def of state.servers) {
+      if (def.kind === "docs" && state.serverRuntime[def.id]?.running
+        && (state.collections !== prev.collections || state.environments !== prev.environments || state.globals !== prev.globals)) {
+        scheduleDocsServerUpdate(def.id);
+        continue;
+      }
       if (def.kind !== "mock" || !state.serverRuntime[def.id]?.running) continue;
       const now = state.collections.find((c) => c.id === def.collectionId);
       const before = prev.collections.find((c) => c.id === def.collectionId);
@@ -344,7 +354,11 @@ export function duplicateCollection(id: string) {
   const copy = clone(c);
   copy.id = uid();
   copy.name = `${c.name} Copy`;
-  copy.items = copy.items.map((i) => cloneWithNewIds(i));
+  const ids = new Map<string, string>();
+  copy.items = copy.items.map((i) => cloneWithNewIds(i, ids));
+  copy.description = remapRequestLinks(copy.description, ids);
+  copy.pages = copy.pages?.map((p) => ({ ...p, id: uid(), body: remapRequestLinks(p.body, ids) }));
+  delete copy.linkedPath;
   set((s) => ({ collections: [...s.collections, copy] }));
 }
 
@@ -634,7 +648,7 @@ export function commitScopes(scopes: Scopes, collectionId?: string) {
   if (scopes.globals.changed) set({ globals: scopes.globals.toList() });
   if (scopes.environment.changed && s.activeEnvironmentId) updateEnvironment(s.activeEnvironmentId, { variables: scopes.environment.toList() });
   if (scopes.collection.changed && collectionId) updateCollection(collectionId, { variables: scopes.collection.toList() });
-  for (const sc of Object.values(scopes)) sc.changed = false;
+  for (const sc of Object.values(scopes)) if (sc instanceof VarScope) sc.changed = false;
 }
 
 // ---------------------------------------------------------------- sending
@@ -741,12 +755,12 @@ export function createServer(kind: ServerDef["kind"], collectionId?: string): Se
   const s = get();
   const col = s.collections.find((c) => c.id === collectionId);
   const used = new Set(s.servers.map((d) => d.port));
-  let port = kind === "mock" ? 3100 : 3200;
+  let port = kind === "mock" ? 3100 : kind === "docs" ? 4000 : 3200;
   while (used.has(port)) port++;
   const def: ServerDef = {
     id: uid(), kind, port, delayMs: 0, cors: true, allowLan: false,
-    name: kind === "mock" ? `${col?.name ?? "Collection"} mock` : "Webhook catcher",
-    collectionId: kind === "mock" ? collectionId : undefined,
+    name: kind === "mock" ? `${col?.name ?? "Collection"} mock` : kind === "docs" ? `${col?.name ?? "Collection"} docs` : "Webhook catcher",
+    collectionId: kind !== "catcher" ? collectionId : undefined,
     response: kind === "catcher"
       ? { status: 200, headers: [{ id: uid(), key: "Content-Type", value: "application/json", enabled: true }], body: '{ "ok": true }' }
       : undefined,
@@ -780,6 +794,10 @@ export async function startServer(id: string) {
       const col = s.collections.find((c) => c.id === def.collectionId);
       if (!col) throw new Error("Pick a collection for this mock server first");
       info = await api.serverStart({ ...base, kind: "mock", routes: nativeRoutes(compileRoutes(col)) });
+    } else if (def.kind === "docs") {
+      const col = s.collections.find((c) => c.id === def.collectionId);
+      if (!col) throw new Error("Pick a collection for this docs server first");
+      info = await api.serverStart({ ...base, kind: "docs", files: await docsSiteFiles(col) });
     } else {
       const r = def.response ?? { status: 200, headers: [], body: "" };
       info = await api.serverStart({
@@ -788,7 +806,7 @@ export async function startServer(id: string) {
       });
     }
     setRuntime(id, { running: true, starting: false, port: info.port, host: info.host });
-    log("info", `${def.kind === "mock" ? "Mock server" : "Webhook catcher"} "${def.name}" listening on http://${info.host === "0.0.0.0" ? "0.0.0.0" : "127.0.0.1"}:${info.port}`);
+    log("info", `${def.kind === "mock" ? "Mock server" : def.kind === "docs" ? "Docs server" : "Webhook catcher"} "${def.name}" listening on http://${info.host === "0.0.0.0" ? "0.0.0.0" : "127.0.0.1"}:${info.port}`);
   } catch (e) {
     setRuntime(id, { running: false, starting: false, error: e instanceof Error ? e.message : String(e) });
   }
@@ -1062,11 +1080,16 @@ async function writeLinked(collectionId: string) {
   const c = get().collections.find((x) => x.id === collectionId);
   if (!c?.linkedPath) return;
   const files = collectionToFiles(c);
-  const sig = filesSignature(files);
-  if (linkedSignature.get(c.linkedPath) === sig) return;
-  linkedSignature.set(c.linkedPath, sig);
+  // Generated Markdown docs ride along, but only the collection's own files count for the
+  // "did anything change on disk" signature.
+  const docs = c.docsConfig?.linkedMarkdown ? buildMarkdownDocs(docsModelFor(c)).map((f) => ({ ...f, path: `api-docs/${f.path}` })) : [];
+  const filesSig = filesSignature(files);
+  const outSig = docs.length ? filesSignature(docs) : "";
+  if (linkedSignature.get(c.linkedPath) === filesSig && linkedSignature.get(`${c.linkedPath}\0docs`) === outSig) return;
+  linkedSignature.set(c.linkedPath, filesSig);
+  linkedSignature.set(`${c.linkedPath}\0docs`, outSig);
   try {
-    await api.linkedWrite(c.linkedPath, files);
+    await api.linkedWrite(c.linkedPath, [...files, ...docs]);
   } catch (e) {
     log("error", `Could not write "${c.name}" to ${c.linkedPath}: ${e}`);
   }
@@ -1087,7 +1110,7 @@ export async function reloadLinked(collectionId: string, opts: { initial?: boole
   const root = c.linkedPath;
   let files: { path: string; content: string }[];
   try {
-    files = (await api.readDirFiles(root, ["json"])).filter((f) => /(^|\/)(collection|folder)\.json$|\.request\.json$/.test(f.path));
+    files = (await api.readDirFiles(root, ["json", "md"])).filter((f) => LINKED_FILE.test(f.path));
   } catch (e) {
     log("error", `Linked folder for "${c.name}" is not available (${root}): ${e}`);
     return;
@@ -1144,7 +1167,7 @@ export async function unlinkCollection(collectionId: string) {
 
 /** Open a folder that already contains a linked collection as a new collection. */
 export async function openLinkedFolder(root: string): Promise<Collection> {
-  const files = (await api.readDirFiles(root, ["json"])).filter((f) => /(^|\/)(collection|folder)\.json$|\.request\.json$/.test(f.path));
+  const files = (await api.readDirFiles(root, ["json", "md"])).filter((f) => LINKED_FILE.test(f.path));
   const loaded = filesToCollection(files);
   const existing = get().collections.find((c) => c.id === loaded.id || c.linkedPath === root);
   if (existing) {
@@ -1241,4 +1264,181 @@ export async function startLoadTest(tabId: string, config: LoadConfigInput) {
 export function stopLoadTest(tabId: string) {
   const run = useLoadRuns.getState()[tabId];
   if (run?.running) api.loadStop(run.runId).catch(() => {});
+}
+
+// ---------------------------------------------------------------- API documentation
+
+/** Where an open Docs tab should scroll to next (collection id → anchor or item id). */
+export const useDocsTarget = create<Record<string, string | undefined>>(() => ({}));
+
+/** Open a collection's documentation, optionally at a request, folder or page. */
+export function openDocs(collectionId: string, target?: string) {
+  openSpecialTab("docs", { collectionId });
+  if (target) useDocsTarget.setState({ [collectionId]: target });
+}
+
+export function updateDocsConfig(collectionId: string, patch: Partial<DocsConfig>) {
+  mutateCollection(collectionId, (c) => { c.docsConfig = { ...c.docsConfig, ...patch }; });
+}
+
+export function addDocPage(collectionId: string, title = "New page"): DocPage {
+  const page: DocPage = { id: uid(), title, body: "" };
+  mutateCollection(collectionId, (c) => { c.pages = [...(c.pages ?? []), page]; });
+  return page;
+}
+
+export function updateDocPage(collectionId: string, pageId: string, patch: Partial<DocPage>) {
+  mutateCollection(collectionId, (c) => { c.pages = (c.pages ?? []).map((p) => (p.id === pageId ? { ...p, ...patch } : p)); });
+}
+
+export function deleteDocPage(collectionId: string, pageId: string) {
+  mutateCollection(collectionId, (c) => { c.pages = (c.pages ?? []).filter((p) => p.id !== pageId); });
+}
+
+export function moveDocPage(collectionId: string, pageId: string, delta: -1 | 1) {
+  mutateCollection(collectionId, (c) => {
+    const pages = [...(c.pages ?? [])];
+    const i = pages.findIndex((p) => p.id === pageId);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= pages.length) return;
+    [pages[i], pages[j]] = [pages[j], pages[i]];
+    c.pages = pages;
+  });
+}
+
+/** Make one example the default for its request (or clear the default with `null`). */
+export function setDefaultExample(collectionId: string, requestId: string, exampleId: string | null) {
+  mutateCollection(collectionId, (c) => {
+    const it = findItem(c.items, requestId);
+    if (it?.type === "request") it.examples = (it.examples ?? []).map((e) => ({ ...e, default: e.id === exampleId ? true : undefined }));
+  });
+}
+
+/** The docs model for a collection, with its docs environment and the globals. Not yet leak-checked. */
+export function docsModelFor(c: Collection): DocsModel {
+  const s = get();
+  return buildDocsModel(c, { environment: s.environments.find((e) => e.id === c.docsConfig?.environmentId), globals: s.globals });
+}
+
+/** Text fields that may contain Mermaid blocks. */
+export const docsTexts = (m: DocsModel) => [m.description, ...m.pages.map((p) => p.body), ...m.sections.map((x) => x.description)];
+
+/** Site files for the live docs server. Credential-looking strings are redacted without asking. */
+async function docsSiteFiles(c: Collection) {
+  const model = scanDocsText(docsModelFor(c), true).cleaned;
+  const mermaidJs = needsMermaid(docsTexts(model)) ? await loadMermaidJs() : undefined;
+  return buildSite(model, { mermaidJs });
+}
+
+function scheduleDocsServerUpdate(serverId: string) {
+  clearTimeout(linkedTimers.get(`d:${serverId}`));
+  linkedTimers.set(`d:${serverId}`, window.setTimeout(async () => {
+    const s = get();
+    const def = s.servers.find((d) => d.id === serverId);
+    const col = s.collections.find((c) => c.id === def?.collectionId);
+    if (!def || !col || !s.serverRuntime[serverId]?.running) return;
+    api.serverUpdate(serverId, { kind: "docs", files: await docsSiteFiles(col) }).catch(() => {});
+  }, 500));
+}
+
+/** Start (creating if needed) the live docs server for a collection. Returns its definition. */
+export async function serveDocs(collectionId: string): Promise<ServerDef> {
+  const def = get().servers.find((d) => d.kind === "docs" && d.collectionId === collectionId) ?? createServer("docs", collectionId);
+  if (!get().serverRuntime[def.id]?.running) await startServer(def.id);
+  return def;
+}
+
+// ---------------------------------------------------------------- docs snapshots (versions)
+
+export interface DocsSnapshot {
+  id: string;
+  collectionId: string;
+  label: string;
+  createdAt: number;
+  /** The collection as it was, secrets removed. */
+  collection: Collection;
+}
+
+const SNAPSHOT_LIMIT = 20;
+export const useDocsSnapshots = create<{ loaded: boolean; list: DocsSnapshot[] }>(() => ({ loaded: false, list: [] }));
+
+export async function loadDocsSnapshots() {
+  if (useDocsSnapshots.getState().loaded) return;
+  let list: DocsSnapshot[] = [];
+  try { list = JSON.parse((await api.storeRead("docs-snapshots")) ?? "[]"); } catch { /* start empty */ }
+  useDocsSnapshots.setState({ loaded: true, list: Array.isArray(list) ? list : [] });
+}
+
+async function persistSnapshots(list: DocsSnapshot[]) {
+  useDocsSnapshots.setState({ list });
+  await api.storeWrite("docs-snapshots", JSON.stringify(list));
+}
+
+/** Save the collection's current state as a named version (default: its docs version, or the date). */
+export async function saveDocsSnapshot(collectionId: string, label?: string): Promise<DocsSnapshot | null> {
+  await loadDocsSnapshots();
+  const c = get().collections.find((x) => x.id === collectionId);
+  if (!c) return null;
+  const copy = scanCollection(c, true).cleaned;
+  delete copy.linkedPath;
+  const snap: DocsSnapshot = {
+    id: uid(), collectionId, createdAt: Date.now(), collection: copy,
+    label: label || (c.docsConfig?.version ? `v${c.docsConfig.version}` : new Date().toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })),
+  };
+  const others = useDocsSnapshots.getState().list;
+  const mine = [snap, ...others.filter((s) => s.collectionId === collectionId)].slice(0, SNAPSHOT_LIMIT);
+  await persistSnapshots([...mine, ...others.filter((s) => s.collectionId !== collectionId)]);
+  log("info", `Saved docs snapshot “${snap.label}” of "${c.name}"`);
+  return snap;
+}
+
+export async function deleteDocsSnapshot(id: string) {
+  await persistSnapshots(useDocsSnapshots.getState().list.filter((s) => s.id !== id));
+}
+
+/** Add or replace the "API changes" guide page. */
+export function upsertChangesPage(collectionId: string, body: string, title = "API changes") {
+  const c = get().collections.find((x) => x.id === collectionId);
+  const existing = c?.pages?.find((p) => p.title === title);
+  if (existing) updateDocPage(collectionId, existing.id, { body });
+  else { const p = addDocPage(collectionId, title); updateDocPage(collectionId, p.id, { body }); }
+}
+
+// ---------------------------------------------------------------- examples from real traffic
+
+export interface CapturedResponse { requestId: string; status: number; statusText: string; headers: { key: string; value: string }[]; body: string }
+
+/**
+ * Plan for "Update examples from this run": per request and status, the example to update (same
+ * status) or a new one to add. The last response of each request/status wins.
+ */
+export function planExampleCapture(collectionId: string, captured: CapturedResponse[]) {
+  const c = get().collections.find((x) => x.id === collectionId);
+  const latest = new Map<string, CapturedResponse>();
+  for (const r of captured) latest.set(`${r.requestId}:${r.status}`, r);
+  let update = 0, add = 0;
+  for (const r of latest.values()) {
+    const req = c && findItem(c.items, r.requestId);
+    if (req?.type !== "request") continue;
+    if (req.examples?.some((e) => e.status === r.status)) update++; else add++;
+  }
+  return { update, add, responses: [...latest.values()] };
+}
+
+/** Apply a capture plan: bodies and headers are refreshed; names, descriptions and schemas are kept. */
+export function applyExampleCapture(collectionId: string, responses: CapturedResponse[]) {
+  mutateCollection(collectionId, (c) => {
+    for (const r of responses) {
+      const req = findItem(c.items, r.requestId);
+      if (req?.type !== "request") continue;
+      const headers = r.headers.filter((h) => !/^(set-cookie|date|content-length|connection|keep-alive|transfer-encoding)$/i.test(h.key));
+      const body = tryPrettyJson(r.body) ?? r.body;
+      const examples = req.examples ?? [];
+      const byDefault = examples.findIndex((e) => e.default && e.status === r.status);
+      const i = byDefault >= 0 ? byDefault : examples.findIndex((e) => e.status === r.status);
+      if (i >= 0) examples[i] = { ...examples[i], headers, body, statusText: r.statusText, bodyBase64: undefined };
+      else examples.push({ id: uid(), name: `${r.status} ${r.statusText}`.trim(), status: r.status, statusText: r.statusText, headers, body, request: { method: req.method, url: req.url } });
+      req.examples = examples;
+    }
+  });
 }

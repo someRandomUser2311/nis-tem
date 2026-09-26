@@ -6,19 +6,19 @@ import {
   buildUrl, findPath, getHeader, methodColor, paramsFromUrl, parseQuery, syncPathVariables,
 } from "../lib/utils";
 import {
-  cancelTab, disconnectLive, fetchGraphqlSchema, openLoadTest, openModal, openSpecialTab, primaryAction, prompt, saveExample, saveTab, updateDraft, updateItem, useStore,
+  applyExampleCapture, cancelTab, disconnectLive, fetchGraphqlSchema, openLoadTest, openModal, openSpecialTab, primaryAction, prompt, saveExample, saveTab, updateDraft, updateItem, useStore,
 } from "../store";
 import { AuthEditor, authLabel } from "./AuthEditor";
 import { BodyEditor } from "./BodyEditor";
 import { KeyValueTable } from "./KeyValueTable";
+import { RequestDocs } from "./docs/RequestDocs";
 import { ResponseViewer } from "./ResponseViewer";
-import { CodeEditor } from "./CodeEditor";
 import { ScriptEditor } from "./ScriptEditor";
 import { EditableText, Icon, menuFromEvent, Splitter, Tabs } from "./ui";
 import { VarInput } from "./VarInput";
 import { defaultWs, LiveViewer, WsComposer } from "./LiveViews";
 
-type SubTab = "message" | "params" | "auth" | "headers" | "body" | "scripts" | "settings";
+type SubTab = "message" | "params" | "auth" | "headers" | "body" | "scripts" | "docs" | "settings";
 
 const PROTOCOLS: { id: Protocol; label: string }[] = [
   { id: "http", label: "HTTP" },
@@ -215,6 +215,7 @@ export function RequestEditor({ tab }: { tab: Tab }) {
               { id: "headers", label: "Headers", badge: enabledCount(draft.headers) || undefined },
               ...(protocol !== "ws" ? [{ id: "body" as const, label: "Body", badge: draft.body.mode !== "none" ? "●" : undefined }] : []),
               ...(protocol === "http" ? [{ id: "scripts" as const, label: "Scripts", badge: scriptCount || undefined }] : []),
+              { id: "docs", label: "Docs", badge: draft.description.trim() || draft.docs?.bodySchema || draft.responseSchema?.trim() ? "●" : undefined },
               { id: "settings", label: "Settings" },
             ]}
           />
@@ -222,21 +223,23 @@ export function RequestEditor({ tab }: { tab: Tab }) {
             {sub === "message" && protocol === "ws" && <WsComposer tab={tab} />}
             {sub === "params" && (
               <>
-                <KeyValueTable title="Query Params" rows={draft.params} onChange={onParamsChange} />
+                <KeyValueTable title="Query Params" rows={draft.params} onChange={onParamsChange} docs />
                 {(draft.pathVariables?.length ?? 0) > 0 && (
                   <KeyValueTable
                     title="Path Variables"
                     rows={draft.pathVariables!}
                     onChange={(pathVariables) => set({ pathVariables: pathVariables.filter((v) => draft.pathVariables!.some((o) => o.key === v.key)) })}
                     allowBulk={false}
+                    docs
                   />
                 )}
               </>
             )}
             {sub === "auth" && <AuthEditor auth={draft.auth} onChange={(auth) => set({ auth })} inheritedFrom={inheritedFrom} />}
-            {sub === "headers" && <KeyValueTable title={protocol === "ws" ? "Handshake headers" : "Headers"} rows={draft.headers} onChange={(headers) => set({ headers })} readonlyRows={protocol === "http" ? autoHeaders : undefined} />}
+            {sub === "headers" && <KeyValueTable title={protocol === "ws" ? "Handshake headers" : "Headers"} rows={draft.headers} onChange={(headers) => set({ headers })} readonlyRows={protocol === "http" ? autoHeaders : undefined} docs />}
             {sub === "body" && <BodyEditor body={draft.body} onChange={(body) => set({ body })} requestId={draft.id} onFetchSchema={() => fetchGraphqlSchema(tab.id)} />}
             {sub === "scripts" && <ScriptEditor pre={draft.preRequestScript} test={draft.testScript} onChange={set} />}
+            {sub === "docs" && <RequestDocs tab={tab} draft={draft} onChange={set} />}
             {sub === "settings" && <RequestSettingsEditor draft={draft} onChange={set} protocol={protocol} />}
           </div>
         </div>
@@ -264,6 +267,15 @@ export function RequestEditor({ tab }: { tab: Tab }) {
               const ex = saveExample(tab.id, name.trim(), tab.result!);
               if (ex) openSpecialTab("example", { collectionId: tab.saved.collectionId, requestId: tab.saved.itemId, exampleId: ex.id });
             } : undefined}
+            onUpdateExample={(() => {
+              const res = tab.result?.response;
+              const target = res && tab.saved ? (draft.examples ?? []).find((e) => e.status === res.status && e.default) ?? (draft.examples ?? []).find((e) => e.status === res.status) : undefined;
+              if (!res || !target || !tab.saved || res.isBinary) return undefined;
+              return {
+                label: `Update example “${target.name}” with this response`,
+                run: () => applyExampleCapture(tab.saved!.collectionId, [{ requestId: tab.saved!.itemId, status: res.status, statusText: res.statusText, headers: res.headers, body: res.bodyText }]),
+              };
+            })()}
           />}
         </div>
       </div>
@@ -310,23 +322,7 @@ function RequestSettingsEditor({ draft, onChange, protocol }: { draft: RequestIt
         <input className="input input-sm" type="number" min={0} value={s.timeoutMs ?? ""} placeholder="global"
           onChange={(e) => set({ timeoutMs: e.target.value === "" ? undefined : Number(e.target.value) })} />
       </div>
-      {protocol === "http" && (
-        <div className="setting-row column">
-          <div>
-            <div className="setting-title">Response schema</div>
-            <div className="setting-desc">A JSON Schema every response is validated against; the result appears in Test Results (and in collection runs).</div>
-          </div>
-          <div className="schema-editor">
-            <CodeEditor value={draft.responseSchema ?? ""} onChange={(responseSchema) => onChange({ responseSchema })} language="json"
-              placeholder={'{ "type": "object", "required": ["id"], "properties": { "id": { "type": "integer" } } }'} />
-          </div>
-        </div>
-      )}
-      <div className="setting-row column">
-        <div className="setting-title">Description</div>
-        <textarea className="textarea" rows={6} value={draft.description} placeholder="Document this request (Markdown supported in exports)"
-          onChange={(e) => onChange({ description: e.target.value })} />
-      </div>
+      <p className="help">The description and the response schema (checked against every response) are on the <b>Docs</b> tab.</p>
     </div>
   );
 }

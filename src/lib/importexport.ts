@@ -13,7 +13,9 @@ const desc = (d: unknown): string => (typeof d === "string" ? d : (d as any)?.co
 
 function kvList(list: any[] | undefined, extra?: (x: any) => Partial<KV>): KV[] {
   return (list ?? []).map((x) => kv(String(x.key ?? ""), x.value == null ? "" : String(x.value), {
-    enabled: !x.disabled, description: desc(x.description), ...(extra?.(x) ?? {}),
+    enabled: !x.disabled, description: desc(x.description),
+    ...(x["x-localpost"]?.doc && typeof x["x-localpost"].doc === "object" ? { doc: x["x-localpost"].doc } : {}),
+    ...(extra?.(x) ?? {}),
   }));
 }
 
@@ -146,6 +148,7 @@ function importExamples(list: any[] | undefined, method: string, url: string): E
       headers: (Array.isArray(r.header) ? r.header : []).filter((h: any) => h && h.key).map((h: any) => ({ key: String(h.key), value: String(h.value ?? "") })),
       body: typeof r.body === "string" ? r.body : r.body == null ? "" : JSON.stringify(r.body, null, 2),
       request: { method: (orig?.method ?? method).toUpperCase(), url: orig ? importUrl(orig.url) || url : url },
+      ...pickDocs(r["x-localpost"], ["description", "default", "schema"]),
     };
   });
 }
@@ -155,13 +158,19 @@ function importItem(it: any): Item {
     const folder: FolderItem = {
       id: uid(), type: "folder", name: it.name ?? "Folder", items: it.item.map(importItem),
       auth: importAuth(it.auth), description: desc(it.description), ...scripts(it.event),
+      ...(it["x-localpost"]?.docs?.hidden ? { docs: { hidden: true } } : {}),
     };
     return folder;
   }
   const r = typeof it.request === "string" ? { url: it.request, method: "GET" } : it.request ?? {};
   const url = importUrl(r.url);
   const disabledParams = typeof r.url === "object" ? kvList((r.url?.query ?? []).filter((q: any) => q.disabled)) : [];
-  const enabledParams = parseQuery(url).pairs.map(([k, v]) => kv(k, v));
+  // Descriptions (and docs details) of enabled params live on url.query; the values come from the raw URL.
+  const queryMeta = typeof r.url === "object" ? kvList((r.url?.query ?? []).filter((q: any) => !q.disabled)) : [];
+  const enabledParams = parseQuery(url).pairs.map(([k, v]) => {
+    const meta = queryMeta.find((q) => q.key === k);
+    return kv(k, v, meta ? { description: meta.description, ...(meta.doc ? { doc: meta.doc } : {}) } : {});
+  });
   return newRequest({
     name: it.name ?? "Request",
     method: (r.method ?? "GET").toUpperCase(),
@@ -177,7 +186,14 @@ function importItem(it: any): Item {
     // Localpost-only fields (WebSocket / SSE) survive a round trip through a Postman export.
     ...(it["x-localpost"]?.protocol === "ws" || it["x-localpost"]?.protocol === "sse" ? { protocol: it["x-localpost"].protocol } : {}),
     ...(it["x-localpost"]?.ws ? { ws: it["x-localpost"].ws } : {}),
+    ...pickDocs(it["x-localpost"], ["docs", "responseSchema"]),
   });
+}
+
+/** Localpost-only docs fields kept under `x-localpost` in Postman files (Postman ignores them). */
+function pickDocs(x: any, keys: string[]): Record<string, unknown> {
+  if (!x || typeof x !== "object") return {};
+  return Object.fromEntries(keys.filter((k) => x[k] !== undefined).map((k) => [k, x[k]]));
 }
 
 export function importPostmanCollection(json: any): Collection {
@@ -187,6 +203,9 @@ export function importPostmanCollection(json: any): Collection {
   c.auth = importAuth(json.auth, "none");
   c.variables = kvList(json.variable);
   Object.assign(c, scripts(json.event));
+  const lp = json["x-localpost"];
+  if (Array.isArray(lp?.pages)) c.pages = lp.pages.map((p: any) => ({ id: uid(), title: String(p.title ?? "Page"), body: String(p.body ?? "") }));
+  if (lp?.docsConfig && typeof lp.docsConfig === "object") c.docsConfig = lp.docsConfig;
   return c;
 }
 
@@ -245,7 +264,15 @@ function exportEvents(x: { preRequestScript: string; testScript: string }) {
   return ev.length ? ev : undefined;
 }
 
-const exportKv = (l: KV[]) => l.map((x) => ({ key: x.key, value: x.value, ...(x.enabled ? {} : { disabled: true }), ...(x.description ? { description: x.description } : {}) }));
+const exportKv = (l: KV[]) => l.map((x) => ({
+  key: x.key, value: x.value, ...(x.enabled ? {} : { disabled: true }), ...(x.description ? { description: x.description } : {}),
+  ...(x.doc && Object.keys(x.doc).length ? { "x-localpost": { doc: x.doc } } : {}),
+}));
+
+const compact = (o: Record<string, unknown>) => {
+  const r = Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== "" && v !== false));
+  return Object.keys(r).length ? r : undefined;
+};
 
 function exportBody(b: Body): any {
   switch (b.mode) {
@@ -263,13 +290,19 @@ function exportBody(b: Body): any {
 
 function exportItem(i: Item): any {
   if (i.type === "folder") {
-    return { name: i.name, description: i.description || undefined, item: i.items.map(exportItem), auth: exportAuth(i.auth), event: exportEvents(i) };
+    return { name: i.name, description: i.description || undefined, item: i.items.map(exportItem), auth: exportAuth(i.auth), event: exportEvents(i),
+      ...(i.docs?.hidden ? { "x-localpost": { docs: { hidden: true } } } : {}) };
   }
   const { base } = parseQuery(i.url);
   return {
     name: i.name,
     event: exportEvents(i),
-    ...(i.protocol && i.protocol !== "http" ? { "x-localpost": { protocol: i.protocol, ...(i.ws ? { ws: i.ws } : {}) } } : {}),
+    ...((lp) => (lp ? { "x-localpost": lp } : {}))(compact({
+      protocol: i.protocol && i.protocol !== "http" ? i.protocol : undefined,
+      ws: i.protocol && i.protocol !== "http" ? i.ws : undefined,
+      docs: i.docs && Object.keys(i.docs).length ? i.docs : undefined,
+      responseSchema: i.responseSchema?.trim() || undefined,
+    })),
     request: {
       method: i.method,
       header: exportKv(i.headers),
@@ -291,6 +324,7 @@ function exportItem(i: Item): any {
       header: ex.headers.filter((h) => h.enabled !== false).map(({ key, value }) => ({ key, value })),
       body: ex.body,
       _postman_previewlanguage: /json/i.test(ex.headers.find((h) => h.key.toLowerCase() === "content-type")?.value ?? "") ? "json" : "text",
+      ...((lp) => (lp ? { "x-localpost": lp } : {}))(compact({ description: ex.description, default: ex.default, schema: ex.schema })),
     })),
   };
 }
@@ -308,6 +342,10 @@ export function exportPostmanCollection(c: Collection): any {
     auth: exportAuth(c.auth),
     event: exportEvents(c),
     variable: c.variables.map((v) => ({ key: v.key, value: v.value, ...(v.enabled ? {} : { disabled: true }) })),
+    ...((lp) => (lp ? { "x-localpost": lp } : {}))(compact({
+      pages: c.pages?.length ? c.pages.map(({ title, body }) => ({ title, body })) : undefined,
+      docsConfig: c.docsConfig && Object.keys(c.docsConfig).length ? c.docsConfig : undefined,
+    })),
   };
 }
 

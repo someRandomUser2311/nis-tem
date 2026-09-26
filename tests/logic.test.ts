@@ -18,9 +18,20 @@ import { certificateFor } from "../src/lib/engine";
 import { scanCollection, scanEnvironment } from "../src/lib/leaks";
 import { DEFAULT_SETTINGS } from "../src/types";
 import { importBrunoFolder, exampleFromSchema, importOpenApi, exportHar } from "../src/lib/importers";
-import { exportOpenApi, exportHtmlDocs, splitServer } from "../src/lib/exporters";
+import { exportOpenApi, splitServer } from "../src/lib/exporters";
+import { buildSite } from "../src/lib/docs/site";
+import { buildMarkdownDocs } from "../src/lib/docs/markdown-export";
+import { scanDocsText } from "../src/lib/leaks";
+import { docsDrift } from "../src/lib/docs/drift";
+import { lintDocs } from "../src/lib/docs/lint";
+import { changelogMarkdown, diffCollections } from "../src/lib/docs/changelog";
+import { useStore as docsStore, planExampleCapture, applyExampleCapture } from "../src/store";
 import { collectionToFiles, filesToCollection, slugify } from "../src/lib/linked";
 import * as tools from "../src/lib/tools";
+import { inferSchema, schemaRows } from "../src/lib/docs/schema";
+import { renderDocsMarkdown, requestLinks } from "../src/lib/docs/markdown";
+import { buildDocsModel, endpoints } from "../src/lib/docs/model";
+import { cloneWithNewIds } from "../src/lib/utils";
 
 let fails = 0;
 const ok = (c: any, m: string) => { if (!c) { fails++; console.log("FAIL", m); } else console.log("ok  ", m); };
@@ -292,8 +303,8 @@ paths:
   const back = importOpenApi(doc);
   const bf = back.items[0] as any;
   ok(back.variables[0].value === "https://api.rt.io" && bf.items[0].url.startsWith("{{baseUrl}}/users/:id") && bf.items[0].examples[0].status === 200 && JSON.parse(bf.items[1].body.raw).name === "<b>Ada</b>", "openapi: export → import round trip");
-  const html = exportHtmlDocs(col, (md) => `<p>${md}</p>`);
-  ok(html.includes("<title>Round &lt;trip&gt; — API docs</title>") && html.includes("&lt;b&gt;Ada&lt;/b&gt;") && !html.includes("<b>Ada</b>") && html.includes('href="#r1"'), "html docs: escaped, with toc anchors");
+  const [single] = buildSite(buildDocsModel(col), { singleFile: true });
+  ok(single.content.includes("<title>Round &lt;trip&gt; — API documentation</title>") && single.content.includes("&lt;b&gt;Ada&lt;/b&gt;") && !single.content.includes("<b>Ada</b>") && single.content.includes('href="#get-get-user"'), "html docs: escaped, with toc anchors");
   const harDoc = exportHar([{ time: 0, request: p, status: 201, timeMs: 12 }]);
   ok(harDoc.log.entries[0].request.postData.text === '{"name":"<b>Ada</b>"}' && harDoc.log.entries[0].response.status === 201, "har export from history");
 }
@@ -485,6 +496,220 @@ ok(csv.length === 2 && csv[0].name === "Ada, L" && csv[1].age === '4"2', "csv pa
   ok(t.describeCron("30 9 * * 1-5") === "At 09:30, Monday through Friday" && t.describeCron("@daily") === "At 00:00" && t.describeCron("*/5 * * * *") === "Every 5 minutes" && t.describeCron("0 0 1 JAN,JUL *") === "At 00:00, on the 1st of the month, in January and July", "cron descriptions");
   let bad = ""; try { t.parseCron("61 * * * *"); } catch (e: any) { bad = e.message; }
   ok(bad.includes("minute"), "cron validation");
+}
+
+
+// ---------------------------------------------------------------- API docs (D1)
+{
+  // schema rows: required, nesting, $ref (incl. recursion), arrays, oneOf, allOf
+  const rows = schemaRows({ type: "object", required: ["id"], properties: {
+    id: { type: "integer", description: "The id" },
+    owner: { $ref: "#/$defs/User" },
+    tags: { type: "array", items: { type: "string" } },
+    pets: { type: "array", items: { oneOf: [{ title: "Cat", type: "object", properties: { meow: { type: "boolean" } } }, { title: "Dog", type: "object", properties: { bark: { type: "string" } } }] } },
+    both: { allOf: [{ properties: { a: { type: "string" } }, required: ["a"] }, { properties: { b: { type: "number" } } }] },
+  }, $defs: { User: { type: "object", properties: { name: { type: "string", enum: ["a", "b"] }, self: { $ref: "#/$defs/User" } } } } });
+  const byPath = Object.fromEntries(rows.map((r) => [r.path, r]));
+  ok(byPath.id.required && byPath.id.type === "integer" && byPath.id.description === "The id" && !byPath.owner.required, "schema rows: required + description");
+  ok(byPath["owner.name"].depth === 1 && JSON.stringify(byPath["owner.name"].enum) === '["a","b"]' && byPath["owner.self"] && !byPath["owner.self.name"], "schema rows: $ref + recursion stops");
+  ok(byPath.tags.type === "array<string>" && byPath["pets[].meow"].variant === "Cat" && byPath["pets[].bark"].variant === "Dog", "schema rows: arrays + oneOf variants");
+  ok(byPath["both.a"].required && byPath["both.b"] && !byPath["both.b"].required, "schema rows: allOf merged");
+  ok(schemaRows("not json").length === 0 && schemaRows("").length === 0, "schema rows: invalid input is empty");
+  const inf = inferSchema({ id: 1, at: "2024-01-01T00:00:00Z", list: [{ a: 1, b: null }, { a: 2.5, c: "x@y.io" }], maybe: null });
+  ok(inf.required.join() === "id,at,list,maybe" && inf.properties.at.format === "date-time" && inf.properties.list.items.properties.a.type === "number"
+    && inf.properties.list.items.required.join() === "a" && inf.properties.list.items.properties.c.format === "email", "infer schema: formats, merged array items, required");
+
+  // markdown: raw HTML escaped, unsafe URLs dropped, callouts, request links, mermaid
+  const html = renderDocsMarkdown("<script>x</script>\n\nText [a](javascript:alert(1)) [b](https://ok.io) [c](#req:r1) [d](#req:gone)\n\n> [!WARNING]\n> careful\n\n```mermaid\nA-->B\n```", { resolveRequest: (id) => (id === "r1" ? "get-x" : undefined) });
+  ok(html.includes("&lt;script&gt;") && !html.includes("javascript:") && html.includes('href="https://ok.io" target="_blank"'), "docs markdown: escaping + safe links");
+  ok(html.includes('href="#get-x"') && html.includes("req-link broken") && html.includes("callout-warning") && html.includes('<pre class="mermaid">A--&gt;B</pre>'), "docs markdown: request links, callouts, mermaid");
+  ok(requestLinks("see [x](#req:abc) and [y](#req:d-e)").join() === "abc,d-e", "docs markdown: request link targets");
+
+  // docs model
+  const col = newCollection("Shop");
+  col.variables = [kv("baseUrl", "https://api.shop.test"), kv("apiKey", "live-secret-123", { secret: true })];
+  col.auth = { ...defaultAuth("bearer"), bearer: { token: "{{apiKey}}", prefix: "Bearer" } };
+  const folder = newFolder("Orders");
+  const list = newRequest({ name: "List orders", url: "{{baseUrl}}/orders?id={{$guid}}", description: "See [create](#req:CREATE)",
+    params: [kv("id", "{{$guid}}", { description: "Filter", doc: { type: "string", format: "uuid", required: true } })],
+    headers: [kv("X-Api-Key", "hardcoded-secret"), kv("Accept", "application/json")],
+    examples: [{ id: "e1", name: "Other", status: 404, headers: [], body: "{}" }, { id: "e2", name: "OK", status: 200, headers: [], body: '{"ok":true}', default: true }] });
+  const create = newRequest({ name: "Create order", method: "POST", url: "{{baseUrl}}/orders", body: { ...newRequest().body, mode: "raw", rawLanguage: "json", raw: '{"sku":"A1"}' },
+    docs: { status: "beta", tags: ["orders"], bodySchema: '{"type":"object","required":["sku"],"properties":{"sku":{"type":"string"}}}' } });
+  create.id = "CREATE";
+  const hidden = newRequest({ name: "Internal", docs: { hidden: true } });
+  folder.items = [list, create, hidden];
+  col.items = [folder];
+  col.pages = [{ id: "p1", title: "Intro", body: "Hi" }];
+  const m = buildDocsModel(col, { languages: ["curl", "python"] });
+  const eps = endpoints(m);
+  ok(eps.length === 2 && !eps.some((e) => e.name === "Internal") && m.sections[0].kind === "folder" && m.pages[0].anchor === "page-intro", "docs model: structure, hidden skipped, pages");
+  const le = eps[0];
+  ok(le.url === "https://api.shop.test/orders?id={{$guid}}" && le.query[0].required && le.query[0].format === "uuid" && le.query[0].description === "Filter", "docs model: vars resolved, dynamic kept, param docs");
+  const allText = JSON.stringify(m);
+  ok(!allText.includes("live-secret-123") && !allText.includes("hardcoded-secret") && le.headers[0].value === "<value>", "docs model: secrets never appear");
+  ok(le.samples.length === 2 && le.samples[0].code.includes("Authorization: Bearer <token>") && le.samples[1].lang === "python", "docs model: code samples with placeholders");
+  ok(le.examples[0].name === "OK" && le.examples[0].default && le.examples[0].body.includes('"ok": true'), "docs model: default example first, pretty body");
+  ok(eps[1].status === "beta" && eps[1].body?.schemaRows[0].required && m.anchors.CREATE === eps[1].anchor && le.auth?.includes("Bearer"), "docs model: status, body schema, anchors, auth");
+  ok(JSON.stringify(buildDocsModel(col, { languages: ["curl"] })) === JSON.stringify(buildDocsModel(col, { languages: ["curl"] })), "docs model: deterministic");
+
+  // persistence: linked folder + Postman round trips keep docs fields
+  const files = collectionToFiles(col);
+  ok(files.some((f) => f.path === "pages/intro.md" && f.content === "Hi\n"), "linked: pages written as Markdown");
+  const back = filesToCollection(files);
+  const bl = (back.items[0] as any).items;
+  ok(back.pages?.[0].body === "Hi" && bl[0].params[0].doc.format === "uuid" && bl[1].docs.status === "beta" && bl[1].docs.bodySchema.includes("sku") && bl[2].docs.hidden && bl[0].examples[1].default, "linked: docs fields round-trip");
+  const pm = importPostmanCollection(JSON.parse(JSON.stringify(exportPostmanCollection(col))));
+  const pl = (pm.items[0] as any).items;
+  ok(pm.pages?.[0].title === "Intro" && pl[0].params[0].doc.required && pl[0].params[0].description === "Filter" && pl[1].docs.tags[0] === "orders" && pl[0].examples[1].default, "postman: docs fields round-trip");
+
+  // cloning remaps #req links
+  const copy = cloneWithNewIds(folder);
+  const cl = copy.items[0] as any, cc = copy.items[1];
+  ok(cc.id !== "CREATE" && cl.description === `See [create](#req:${cc.id})`, "clone: request links follow new ids");
+}
+
+
+// ---------------------------------------------------------------- API docs (D2: publishing)
+{
+  const col = newCollection("Pets");
+  col.variables = [kv("baseUrl", "https://api.pets.test"), kv("key", "k-123", { secret: true })];
+  col.description = "Intro with a diagram\n\n```mermaid\nA-->B\n```";
+  col.docsConfig = { version: "2.0", accent: "#8b5cf6", logo: "data:image/png;base64,iVBORw0KGgo=", languages: ["curl", "python"] };
+  col.pages = [{ id: "g1", title: "Errors", body: "See [list](#req:L1)." }];
+  const folder = newFolder("Pets");
+  folder.description = "All about pets";
+  const list = newRequest({ name: "List pets", url: "{{baseUrl}}/pets?limit=10", params: [kv("limit", "10", { description: "Page size", doc: { type: "integer", required: true, enum: ["10", "50"] } })],
+    responseSchema: '{"type":"array","items":{"type":"object","required":["id"],"properties":{"id":{"type":"integer"}}}}',
+    examples: [{ id: "x1", name: "OK", status: 200, headers: [{ key: "Content-Type", value: "application/json" }], body: '[{"id":1}]', description: "The list" }, { id: "x2", name: "Bad", status: 400, headers: [], body: '{"error":"x"}', schema: '{"type":"object","properties":{"error":{"type":"string"}}}' }] });
+  list.id = "L1";
+  const create = newRequest({ name: "Create pet", method: "POST", url: "{{baseUrl}}/pets", body: { ...newRequest().body, mode: "raw", rawLanguage: "json", raw: '{"name":"Rex","token":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"}' },
+    docs: { status: "deprecated", tags: ["write"], bodySchema: '{"type":"object","required":["name"],"properties":{"name":{"type":"string","description":"Pet name"}}}' } });
+  folder.items = [list, create];
+  col.items = [folder];
+  const model = buildDocsModel(col);
+
+  // static site
+  const site = buildSite(model, { mermaidJs: "/*mermaid*/" });
+  const html = site.find((f) => f.path === "index.html")!.content;
+  ok(site.map((f) => f.path).join() === "index.html,assets/docs.css,assets/docs.js,assets/mermaid.min.js", "site: folder layout (+mermaid only when used)");
+  ok(buildSite({ ...model, description: "no diagram" }, { mermaidJs: "x" }).length === 3, "site: no mermaid asset without diagrams");
+  const anchors = [...html.matchAll(/href="#([\w-]+)"/g)].map((m) => m[1]);
+  ok(anchors.length > 5 && anchors.every((a) => html.includes(`id="${a}"`)), "site: every internal link has a target");
+  ok(!/(src|href)="(https?:)?\/\//.test(html) && !html.includes("k-123"), "site: no remote resources, no secrets");
+  ok(html.includes(':root{--accent:#8b5cf6}') && html.includes('<img src="data:image/png;base64,') && html.includes('<span class="badge">v2.0</span>'), "site: branding (accent, logo, version)");
+  const idx = JSON.parse(html.match(/<script type="application\/json" id="search-index">([\s\S]*?)<\/script>/)![1]);
+  ok(idx.some((x: any) => x.t === "List pets" && x.m === "GET" && x.u.includes("/pets")) && idx.some((x: any) => x.t === "Errors"), "site: search index");
+  ok(html.includes('class="sample on" data-lang="curl"') && html.includes('data-lang="python"') && html.includes('<option value="python">'), "site: code samples + language switcher");
+  ok(html.includes('class="ep deprecated"') && html.includes("status-deprecated") && html.includes("Pet name"), "site: status + body schema");
+  const bad = buildSite({ ...model, accent: "red;}</style><script>alert(1)</script>", logo: "javascript:alert(1)" }, { singleFile: true })[0].content;
+  ok(!bad.includes("<script>alert(1)") && !bad.includes("javascript:alert"), "site: accent/logo are validated");
+  const one = buildSite(model, { singleFile: true, autoPrint: true, mermaidJs: "var m='</script>';" })[0].content;
+  ok(one.includes("<style>") && one.includes("data-autoprint") && one.includes("var m='<\\/script>'") && !one.includes('src="assets/'), "site: single file inlines assets safely");
+
+  // markdown export
+  const md = buildMarkdownDocs(model);
+  ok(md.map((f) => f.path).join() === "README.md,guides/errors.md,pets.md", "markdown: file layout");
+  const readme = md[0].content, pets = md[2].content, guide = md[1].content;
+  ok(readme.startsWith("<!-- Generated by Localpost.") && readme.includes("# Pets (v2.0)") && readme.includes("[`GET` List pets](pets.md#get-list-pets)") && readme.includes("[Errors](guides/errors.md)"), "markdown: README index");
+  ok(guide.includes("[list](../pets.md#get-list-pets)"), "markdown: request links become relative file links");
+  ok(pets.includes("# Pets") && pets.includes("## GET List pets") && pets.includes("| `limit` * | integer | Page size — One of: `10`, `50`") && pets.includes("_(deprecated)_") && pets.includes("```bash\ncurl"), "markdown: headings, param table, status, sample");
+
+  // leak scan on published text
+  const found = scanDocsText(model);
+  ok(found.findings.some((f) => f.what === "JWT" && f.where.includes("Create pet")), "docs leaks: JWT in example body found");
+  const red = scanDocsText(model, true).cleaned;
+  ok(!JSON.stringify(red).includes("eyJhbGciOiJIUzI1NiJ9.eyJzdWI") && JSON.stringify(red).includes("<redacted>") && red.anchors.L1 === model.anchors.L1, "docs leaks: redaction keeps ids/anchors");
+  ok(scanDocsText({ code: "--header 'X-Api-Key: <value>'", py: '"api_key": "<api-key>"' }).findings.length === 0, "docs leaks: placeholders aren't secrets");
+  ok(scanDocsText({ body: '{"password":"hunter22"}', url: "https://bob:pa55w0rd@db.test" }).findings.length === 2, "docs leaks: passwords");
+
+  // OpenAPI: docs fields out and back in
+  const oa = exportOpenApi(col);
+  const lop = oa.paths["/pets"].get, cop = oa.paths["/pets"].post;
+  ok(oa.info.version === "2.0" && oa.info.description.includes("## Errors") && lop.parameters[0].required && lop.parameters[0].schema.type === "integer" && JSON.stringify(lop.parameters[0].schema.enum) === '["10","50"]', "openapi: version, pages, param docs");
+  ok(lop.responses["200"].content["application/json"].schema.items.required[0] === "id" && lop.responses["400"].content["application/json"].schema.properties.error && (Object.values(lop.responses["200"].content["application/json"].examples)[0] as any).description === "The list", "openapi: response schemas + example descriptions");
+  ok(cop.deprecated && cop.tags.join() === "Pets,write" && cop.requestBody.content["application/json"].schema.required[0] === "name", "openapi: deprecated, tags, body schema");
+  const rt = importOpenApi(JSON.parse(JSON.stringify(oa)));
+  const rl = (rt.items[0] as any).items[0], rc = (rt.items[0] as any).items[1];
+  ok(rt.docsConfig?.version === "2.0" && rl.params[0].doc.required && rl.params[0].doc.type === "integer" && rl.params[0].description === "Page size" && JSON.parse(rl.responseSchema).items.required[0] === "id", "openapi import: param docs + response schema");
+  ok(rc.docs.status === "deprecated" && rc.docs.tags[0] === "write" && JSON.parse(rc.docs.bodySchema).required[0] === "name" && rl.examples.find((e: any) => e.status === 400).schema.includes("error"), "openapi import: status, tags, body + error schemas");
+  // $ref inlining with recursion
+  const refDoc = { openapi: "3.0.0", info: { title: "R" }, paths: { "/n": { get: { responses: { "200": { description: "ok", content: { "application/json": { schema: { $ref: "#/components/schemas/Node" } } } } } } } },
+    components: { schemas: { Node: { type: "object", properties: { name: { type: "string" }, child: { $ref: "#/components/schemas/Node" } } } } } };
+  const node = JSON.parse(((importOpenApi(refDoc).items[0]) as any).responseSchema);
+  ok(node.properties.name.type === "string" && node.properties.child.$ref === "#/components/schemas/Node", "openapi import: $refs inlined, recursion kept as $ref");
+}
+
+
+// ---------------------------------------------------------------- API docs (D3: accuracy)
+{
+  const res = (status: number, body: string) => ({ status, bodyText: body, headers: [{ key: "Content-Type", value: "application/json" }] });
+  const r = newRequest({ name: "Get user", url: "{{base}}/users/:id",
+    responseSchema: '{"type":"object","required":["id","name"],"properties":{"id":{"type":"integer"},"name":{"type":"string"}}}',
+    examples: [{ id: "a", name: "OK", status: 200, headers: [], body: '{"id":1,"name":"A"}' }, { id: "b", name: "Missing", status: 404, headers: [], body: '{"error":"nope","code":7}' }] });
+  const pass = docsDrift(r, res(200, '{"id":2,"name":"B","extra":true}'));
+  ok(pass.length === 1 && pass[0].passed && pass[0].name.includes("response schema"), "drift: matching 200 passes against the response schema");
+  const fail = docsDrift(r, res(200, '{"id":"2"}'));
+  ok(!fail[0].passed && /name|integer/.test(fail[0].error ?? ""), "drift: schema violations fail with details");
+  const inferred = docsDrift(r, res(404, '{"error":"gone","code":9,"more":null}'));
+  ok(inferred[0].passed && inferred[0].name.includes("(inferred)") && !docsDrift(r, res(404, '{"error":5}'))[0].passed, "drift: other statuses use a relaxed schema inferred from the example");
+  ok(!docsDrift(r, res(500, "{}"))[0].passed && docsDrift(r, res(500, "{}"))[0].name.includes("status 500"), "drift: undocumented status fails");
+  ok(docsDrift(newRequest({ name: "x" }), res(200, "{}")).length === 0 && !docsDrift(r, res(200, "<html>"))[0].passed, "drift: undocumented requests skipped; non-JSON body fails");
+
+  // lint
+  const col = newCollection("L");
+  const good = newRequest({ name: "Good", url: "{{b}}/a/:id", description: "Fine", pathVariables: [kv("id", "1", { description: "The id" })],
+    params: [kv("q", "x", { description: "Query" })], headers: [kv("Accept", "*/*")],
+    examples: [{ id: "g", name: "OK", status: 200, headers: [], body: "{}" }] });
+  const bad = newRequest({ name: "Bad", url: "{{b}}/b/:bid", params: [kv("page", "1")], responseSchema: '{"type":"object","required":["id"]}', description: "see [gone](#req:nope) and [hidden](#req:HID)",
+    docs: { bodySchema: "{not json" },
+    examples: [{ id: "x", name: "One", status: 200, headers: [], body: '{"name":"no id"}' }, { id: "y", name: "Two", status: 201, headers: [], body: '{"token":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"}' }] });
+  const hid = newRequest({ name: "Hidden", docs: { hidden: true } }); hid.id = "HID";
+  const bare = newRequest({ name: "Bare" });
+  col.items = [good, bad, hid, bare];
+  col.pages = [{ id: "p", title: "Empty", body: " " }];
+  const issues = lintDocs(col, buildDocsModel(col));
+  const rules = (name: string) => issues.filter((i) => i.target.name === name).map((i) => i.rule).sort();
+  ok(rules("Good").length === 0, "lint: a fully documented request has no issues");
+  ok(JSON.stringify(rules("Bad")) === JSON.stringify(["broken-link", "broken-link", "invalid-schema", "no-default-example", "stale-example", "stale-example", "undocumented-param", "undocumented-path-variable"]), `lint: request rules (${rules("Bad")})`);
+  ok(rules("Bare").join() === "endpoint-description,no-example" && rules("Empty").join() === "empty-page" && !issues.some((i) => i.target.name === "Hidden"), "lint: missing docs, empty page, hidden skipped");
+  ok(issues.some((i) => i.rule === "collection-description") && issues.some((i) => i.rule === "secret-in-docs") && issues[0].severity === "error", "lint: collection rules, secrets, errors first");
+
+  // changelog
+  const v1 = newCollection("API");
+  const u1 = newRequest({ name: "Get user", url: "{{b}}/users/:id", params: [kv("fields", "", { doc: { enum: ["a", "b"] } })], responseSchema: '{"type":"object","properties":{"id":{"type":"integer"},"email":{"type":"string"}}}', examples: [{ id: "1", name: "OK", status: 200, headers: [], body: "{}" }] });
+  const d1 = newRequest({ name: "Delete user", method: "DELETE", url: "{{b}}/users/:id" });
+  v1.items = [u1, d1];
+  const v2 = JSON.parse(JSON.stringify(v1));
+  const u2 = v2.items[0];
+  u2.url = "{{b}}/users/:userId";
+  u2.params = [kv("fields", "", { doc: { enum: ["a"] } }), kv("expand", "", { doc: { required: true } })];
+  u2.responseSchema = '{"type":"object","properties":{"id":{"type":"string"}}}';
+  u2.docs = { status: "deprecated" };
+  u2.examples.push({ id: "2", name: "Gone", status: 410, headers: [], body: "{}" });
+  v2.items[1] = newRequest({ name: "Create user", method: "POST", url: "{{b}}/users" });
+  const diff = diffCollections(v1, v2);
+  ok(diff.added.length === 1 && diff.added[0].method === "POST" && diff.removed.length === 1 && diff.removed[0].method === "DELETE", "changelog: added/removed endpoints (variable names ignored)");
+  const ch = diff.changed[0];
+  ok(ch && ch.breaking && ch.changes.includes("Deprecated") && ch.changes.some((c) => c.includes("New query parameter `expand` (required)")) && ch.changes.some((c) => c.includes("removed `b`")) && ch.changes.some((c) => c.includes("removed `email`") && c.includes("`id.type`")) && ch.changes.some((c) => c.includes("410")), `changelog: changed endpoint details (${ch?.changes.join(" | ")})`);
+  const cmd = changelogMarkdown(diff, "v1", "v2");
+  ok(cmd.includes("> [!WARNING]") && cmd.includes("### Added") && cmd.includes("### Removed") && cmd.includes("**(breaking)**") && changelogMarkdown(diffCollections(v1, v1), "a", "b").includes("No API changes"), "changelog: markdown page");
+
+  // capture examples from a run
+  const cc = newCollection("Cap");
+  const cr = newRequest({ name: "R", examples: [{ id: "e1", name: "Nice name", status: 200, headers: [], body: "{}", description: "kept" }] });
+  cc.items = [cr];
+  docsStore.setState({ collections: [cc] });
+  const caps = [
+    { requestId: cr.id, status: 200, statusText: "OK", headers: [{ key: "Content-Type", value: "application/json" }, { key: "Set-Cookie", value: "s=1" }], body: '{"v":1}' },
+    { requestId: cr.id, status: 200, statusText: "OK", headers: [], body: '{"v":2}' },
+    { requestId: cr.id, status: 404, statusText: "Not Found", headers: [], body: '{"e":1}' },
+  ];
+  const plan = planExampleCapture(cc.id, caps);
+  ok(plan.update === 1 && plan.add === 1 && plan.responses.length === 2, "capture: plan (latest per status wins)");
+  applyExampleCapture(cc.id, plan.responses);
+  const ex = (docsStore.getState().collections[0].items[0] as any).examples;
+  ok(ex.length === 2 && ex[0].name === "Nice name" && ex[0].description === "kept" && ex[0].body.includes('"v": 2') && ex[1].status === 404 && ex[1].name === "404 Not Found", "capture: updates keep name/description, new statuses added");
 }
 
 console.log(fails ? `\n${fails} FAILURES` : "\nALL PASSED");

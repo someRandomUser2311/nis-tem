@@ -70,6 +70,34 @@ const onlyGood = await main(["run", colPath, "-n", "1", "--folder", "nope"], out
 ok(onlyGood === 2 && lines.join().includes("No folder"), "unknown folder is a usage error");
 ok((await main(["frobnicate"], () => {})) === 2 && (await main(["--help"], () => {})) === 0, "usage errors and --help");
 
+// docs command
+const docsCol = { ...collection, info: { ...collection.info, name: "Docs e2e", description: "Hello **docs**" } };
+await writeFile(join(dir, "docs.json"), JSON.stringify(docsCol));
+lines.length = 0;
+const siteDir = join(dir, "site");
+ok((await main(["docs", join(dir, "docs.json"), "-o", siteDir], out)) === 0 && lines.join().includes("Docs site written"), "docs: site exit code 0");
+const index = await readFile(join(siteDir, "index.html"), "utf8");
+ok(index.includes("<title>Docs e2e — API documentation</title>") && index.includes("<strong>docs</strong>") && index.includes(`http://127.0.0.1:${port}/login`) && (await readFile(join(siteDir, "assets/docs.js"), "utf8")).length > 100, "docs: site content (variables resolved)");
+ok((await main(["docs", join(dir, "docs.json"), "-f", "markdown", "-o", join(dir, "md"), "--silent"], out)) === 0 && (await readFile(join(dir, "md/README.md"), "utf8")).includes("# Docs e2e"), "docs: markdown");
+ok((await main(["docs", join(dir, "docs.json"), "-f", "openapi", "-o", join(dir, "api.yaml"), "--silent"], out)) === 0 && (await readFile(join(dir, "api.yaml"), "utf8")).startsWith("openapi: 3.1.0"), "docs: openapi yaml");
+ok((await main(["docs", join(dir, "docs.json"), "-f", "pdf"], () => {})) === 2 && (await main(["docs"], () => {})) === 2 && (await main(["docs", "--help"], () => {})) === 0, "docs: usage errors");
+
+// docs --check and run --docs-drift
+lines.length = 0;
+ok((await main(["docs", join(dir, "docs.json"), "--check"], out)) === 0 && lines.join("\n").includes("Docs check: 0 errors"), "docs --check: warnings only → exit 0");
+ok((await main(["docs", join(dir, "docs.json"), "--check", "--strict", "--silent"], out)) === 1, "docs --check --strict: warnings fail");
+const drift = {
+  info: { name: "Drift", schema: collection.info.schema },
+  variable: collection.variable,
+  item: [{ name: "Echo", request: { method: "GET", url: "{{base}}/echo" },
+    response: [{ name: "OK", code: 200, status: "OK", header: [{ key: "Content-Type", value: "application/json" }], body: '{"method":1,"query":{},"body":""}' }] }],
+};
+await writeFile(join(dir, "drift.json"), JSON.stringify(drift));
+lines.length = 0;
+const driftCode = await main(["run", join(dir, "drift.json"), "--docs-drift"], out);
+ok(driftCode === 1 && lines.join("\n").includes("✗ Docs: 200 response matches the example “OK” (inferred)") && lines.join("\n").includes("/method"), "run --docs-drift: mismatch fails the run");
+ok((await main(["run", join(dir, "drift.json"), "--silent"], out)) === 0, "run without --docs-drift: no docs checks");
+
 server.close();
 if (fails) { console.log(`\n${fails} CLI test(s) FAILED`); process.exit(1); }
 console.log("\nCLI: ALL PASSED");

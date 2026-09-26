@@ -144,7 +144,7 @@ they get is `pm.sendRequest`, which goes through the same Rust engine.
 | `runner.ts` | Sequential collection/folder runs with iterations, delay, CSV/JSON data rows, `setNextRequest`, stop-on-failure and cancellation |
 | `utils.ts` | Tree helpers (find/remove/move/clone), URL ⇄ query-params sync that preserves `{{vars}}` and disabled rows, `:path` variable handling, formatting |
 | `importers.ts` | OpenAPI 3 / Swagger 2 (with example bodies from schemas), HAR, Insomnia v4, Hoppscotch and Bruno (`.bru`) importers; HAR export of history |
-| `exporters.ts` | Collection → OpenAPI 3.1, and a self-contained HTML documentation page |
+| `exporters.ts` | Collection → OpenAPI 3.1 (with parameter details, schemas, tags, deprecations) |
 | `linked.ts` | Collection ⇄ git-friendly folder layout (`collection.json`, `folder.json`, `*.request.json`, multi-line strings as line arrays, secrets never written) |
 | `search.ts` | Fuzzy ranking for the command palette, full-text search, find & replace, JSON → table/CSV, environment compare |
 | `mock.ts` | Compiles saved examples into mock routes (`:id` and `{{var}}` segments become wildcards) |
@@ -156,6 +156,48 @@ they get is `pm.sendRequest`, which goes through the same Rust engine.
 | `tools.ts` | Dev toolbox transforms: JWT decode/verify/sign, encoders, hashes/HMAC, UUID v4/v7/ULID, time parsing, JSON ⇄ YAML ⇄ CSV, JSON diff, regex, cron |
 | `events.ts` | `onEvent(topic, handler)`: Tauri `listen()` in the app, a `window` event in the browser preview |
 | `devShim.ts` | Browser-only fallback for `npm run dev` (localStorage, `fetch`, browser WebSocket/streams, simulated load tests); dead-code-eliminated from production |
+
+### API documentation: `src/lib/docs/`, `src/components/docs/`
+
+Every docs output is rendered from one **docs model** (`lib/docs/model.ts`). `buildDocsModel(collection, { environment, globals })` walks the tree and returns pages, folders and endpoints in order, skipping hidden items. Each endpoint carries its resolved URL, parameter and schema tables, examples (default first) and code samples.
+
+**Secrets never enter the model:**
+
+- Variables resolve from a scope set that excludes secret and keychain variables, so those stay `{{name}}`.
+- `{{$dynamic}}` variables stay literal, via `Scopes.keepDynamic`, so the output is stable.
+- Credentials in auth and sensitive headers become placeholders such as `<token>`.
+
+Samples come from the ordinary `prepareRequest` → `codegen.generate` path.
+
+```
+Collection ──buildDocsModel──► DocsModel ──┬─► DocsView / EndpointDoc (React, in-app)
+                                           ├─► buildSite ─► index.html + assets/ | one HTML file
+                                           │     └─► docs server (servers.rs, Mode::Docs) · docs_write (docs.rs)
+                                           ├─► buildMarkdownDocs ─► README.md + folder / guide files (+ linked api-docs/)
+                                           └─► lintDocs (Checks, CLI --check)
+scanDocsText (leaks.ts) runs on the model before publishing: prompt in the app, redact in the CLI / live server
+```
+
+| Module | Responsibility |
+|--------|----------------|
+| `model.ts` | The docs model (above) |
+| `schema.ts` | `schemaRows` flattens JSON Schema (`$ref`, `allOf`, `oneOf`/`anyOf`, arrays) into field rows; `inferSchema` for the *Generate* buttons |
+| `markdown.ts` | DOM-free Markdown (works under Node): raw HTML escaped, URLs restricted to safe schemes, callouts, `#req:<id>` links, Mermaid blocks |
+| `site.ts`, `site-assets.ts` | The static site: HTML plus self-contained CSS/JS (search index, language switcher, theme, print); Mermaid's script is added only when a diagram is used |
+| `markdown-export.ts` | GitHub-flavoured Markdown folder; files start with a "generated" marker so linked folders only ever delete generated ones |
+| `lint.ts` | Checks (rules and severities) |
+| `drift.ts` | `docsDrift(request, response)` → `Docs: …` test results; the runner adds them with `checkDocs` |
+| `changelog.ts` | `diffCollections` (endpoints matched on method + path) and the "API changes" Markdown |
+| `mermaid-asset.ts` | Lazily loads `mermaid.min.js` as text for published sites (desktop app; the CLI reads it from `node_modules`) |
+
+**Where docs data lives:**
+
+- On items and KV rows: `KV.doc`, `RequestItem.docs`, `Example.description/default/schema`.
+- On the collection: `Collection.pages` and `Collection.docsConfig`.
+- In the linked-folder files, with guide pages as `pages/*.md`.
+- In Postman exports, under `x-localpost`.
+
+Snapshots for the changelog are kept in the store file `docs-snapshots.json`, with secrets stripped.
 
 ### Dev toolbox: `src/components/tools/`
 
@@ -218,12 +260,13 @@ sends the same request but emits the body as `lp://stream` chunks (used for Serv
 | Module | Responsibility |
 |--------|----------------|
 | `ws.rs` | WebSocket client (tokio-tungstenite, rustls): `ws_connect` / `ws_send` / `ws_close`, frames as `lp://ws` events |
-| `servers.rs` | Mock servers and webhook catchers on axum. Route matching (method, path, query, `x-mock-response-name` / `-code`) happens here, and every hit is sent as an `lp://server` event |
+| `servers.rs` | Mock servers, webhook catchers and live docs servers on axum. Route matching (method, path, query, `x-mock-response-name` / `-code`) happens here, docs sites are served from memory, and every hit is sent as an `lp://server` event |
 | `oauth.rs` | One-shot loopback listener for the OAuth authorization-code redirect; opens the system browser |
 | `secrets.rs` | Keychain storage (keyring crate): one item per workspace holding a JSON map of secret values |
 | `workspaces.rs` | Workspace registry (`<app data>/workspaces.json`) and switching the data dir |
-| `linked.rs` | Writes a linked collection's files (only the ones that changed) and watches the folder (notify) |
+| `linked.rs` | Writes a linked collection's files (only the ones that changed) and watches the folder (notify). Guide pages are removed only if the old `collection.json` listed them, and `api-docs/*.md` only while they carry the generated marker |
 | `load.rs` | Load generator: N workers with ramp-up, think time and a duration or request limit; HDR histograms; `lp://load` stats every second |
+| `docs.rs` | `docs_write`: publish a site into a folder, keeping a `.localpost-docs.json` manifest so later publishes only replace or remove Localpost's own files (a non-empty folder needs confirmation). `docs_open_page`: write a page to the temp folder and open it in the browser (preview, Save as PDF) |
 
 ### `storage.rs`
 
@@ -256,7 +299,7 @@ sends the same request but emits the body as `lp://stream` chunks (used for Serv
 ## Data model (abridged)
 
 ```ts
-Collection { id, name, items: Item[], auth, variables: KV[], preRequestScript, testScript, description, linkedPath? }
+Collection { id, name, items: Item[], auth, variables: KV[], preRequestScript, testScript, description, linkedPath?, pages?: DocPage[], docsConfig? }
 Item = FolderItem | RequestItem
 FolderItem { id, type: "folder", name, items: Item[], auth, preRequestScript, testScript, description }
 RequestItem {
@@ -265,12 +308,12 @@ RequestItem {
   body: { mode: none|raw|urlencoded|formdata|binary|graphql, raw, rawLanguage, urlencoded, formdata, binaryPath, graphql },
   auth: { type: inherit|none|basic|bearer|apikey|oauth2|digest|awsv4|hawk, … },
   protocol?: http|ws|sse, ws?: { protocols, messages },
-  examples?: Example[], pinned?, responseSchema?,
+  examples?: Example[], pinned?, responseSchema?, docs?: { hidden?, status?, tags?, bodySchema? },
   preRequestScript, testScript, description,
   settings: { followRedirects?, verifySsl?, timeoutMs? }   // per-request overrides
 }
-Example { id, name, status, statusText, headers, body, request? }
-KV { id, key, value, enabled, description?, type?: text|file, secret?, inKeychain? }
+Example { id, name, status, statusText, headers, body, request?, description?, default?, schema? }
+KV { id, key, value, enabled, description?, type?: text|file, secret?, inKeychain?, doc?: { required?, type?, format?, enum?, default?, example?, deprecated? } }
 Environment { id, name, variables: KV[] }
 ```
 

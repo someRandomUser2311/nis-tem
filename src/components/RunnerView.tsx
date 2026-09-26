@@ -4,7 +4,7 @@ import type { Collection, FolderItem, Tab } from "../types";
 import { api } from "../lib/api";
 import { parseDataFile, startRun, type RunEntry, type RunHandle } from "../lib/runner";
 import { findItem, flattenRequests, formatBytes, formatMs, methodColor, statusColor } from "../lib/utils";
-import { openRequest, useStore } from "../store";
+import { applyExampleCapture, confirmDialog, openRequest, planExampleCapture, useStore } from "../store";
 import { Empty, Icon, menuFromEvent, Toggle } from "./ui";
 import { toHtmlReport, toJsonReport, toJUnit } from "../lib/reports";
 
@@ -24,6 +24,7 @@ function Runner({ collection, folderId }: { collection: Collection; folderId?: s
   const [dataError, setDataError] = useState("");
   const [persist, setPersist] = useState(true);
   const [stopOnError, setStopOnError] = useState(false);
+  const [checkDocs, setCheckDocs] = useState(false);
 
   const [entries, setEntries] = useState<RunEntry[]>([]);
   const [running, setRunning] = useState(false);
@@ -56,7 +57,7 @@ function Runner({ collection, folderId }: { collection: Collection; folderId?: s
     setStarted(Date.now());
     setFinishedAt(null);
     const h = startRun(
-      { collection, requests, iterations, delayMs, data: data?.rows ?? [], persistVariables: persist, stopOnError },
+      { collection, requests, iterations, delayMs, data: data?.rows ?? [], persistVariables: persist, stopOnError, checkDocs, keepResponses: true },
       (e) => setEntries((prev) => [...prev, e]),
       (iteration, index) => setProgress({ iteration, index }),
     );
@@ -77,6 +78,15 @@ function Runner({ collection, folderId }: { collection: Collection; folderId?: s
     }
   };
 
+  const updateExamples = async () => {
+    const captured = entries.filter((e) => e.response).map((e) => ({ requestId: e.requestId, ...e.response! }));
+    const plan = planExampleCapture(collection.id, captured);
+    if (!plan.update && !plan.add) return;
+    const ok = await confirmDialog("Update examples from this run",
+      `${plan.update ? `Update ${plan.update} existing example${plan.update === 1 ? "" : "s"}` : ""}${plan.update && plan.add ? " and " : ""}${plan.add ? `add ${plan.add} new one${plan.add === 1 ? "" : "s"}` : ""} with the responses from this run?\n\nOne example per request and status code; names, descriptions and schemas are kept.`,
+      { confirmText: "Update examples" });
+    if (ok) applyExampleCapture(collection.id, plan.responses);
+  };
   const allTests = entries.flatMap((e) => e.tests);
   const passedTests = allTests.filter((t) => t.passed && !t.skipped).length;
   const failedTests = allTests.filter((t) => !t.passed).length;
@@ -150,6 +160,7 @@ function Runner({ collection, folderId }: { collection: Collection; folderId?: s
           <div className="runner-toggles">
             <Toggle checked={persist} onChange={setPersist} label="Persist variable changes after the run" />
             <Toggle checked={stopOnError} onChange={setStopOnError} label="Stop run if an error occurs or a test fails" />
+            <Toggle checked={checkDocs} onChange={setCheckDocs} label="Check responses against the docs (schemas and examples)" />
           </div>
         </div>
 
@@ -187,6 +198,9 @@ function Runner({ collection, folderId }: { collection: Collection; folderId?: s
                 </span>
               )}
               <div className="flex-1" />
+              <button className="btn" disabled={running || !entries.some((e) => e.response)} onClick={updateExamples} title="Save each request's latest response as its example (one per status)">
+                <Icon name="example" /> Update examples
+              </button>
               <button className="btn" disabled={!entries.length} onClick={(e) => menuFromEvent(e, [
                 { label: "HTML report…", onClick: () => exportResults("html") },
                 { label: "JUnit XML (CI)…", onClick: () => exportResults("junit") },

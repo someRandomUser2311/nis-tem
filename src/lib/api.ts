@@ -15,7 +15,8 @@ export interface MockRoute {
 
 export type ServerMode =
   | { kind: "mock"; routes: MockRoute[] }
-  | { kind: "catcher"; response: { status: number; headers: { key: string; value: string }[]; body: string } };
+  | { kind: "catcher"; response: { status: number; headers: { key: string; value: string }[]; body: string } }
+  | { kind: "docs"; files: { path: string; content: string }[] };
 
 export interface ServerInfo { id: string; port: number; host: string }
 
@@ -96,6 +97,9 @@ export const api = {
     invoke<ServerInfo>("server_start", { config }),
   serverStop: (id: string) => invoke<void>("server_stop", { id }),
   serverUpdate: (id: string, mode: ServerMode) => invoke<void>("server_update", { id, mode }),
+  docsWrite: (root: string, files: { path: string; content: string }[], force: boolean) =>
+    invoke<{ written: number; unchanged: number; removed: number }>("docs_write", { root, files, force }),
+  docsOpenPage: (name: string, content: string) => invoke<string>("docs_open_page", { name, content }),
   readDirFiles: (path: string, extensions: string[]) => invoke<{ path: string; content: string }[]>("read_dir_files", { path, extensions }),
   linkedWrite: (root: string, files: { path: string; content: string }[]) => invoke<{ written: number; removed: number }>("linked_write", { root, files }),
   linkedWatch: (root: string) => invoke<void>("linked_watch", { root }),

@@ -6,6 +6,7 @@ Localpost is a desktop app for building, testing and automating HTTP APIs. It lo
 Postman (collections, environments, scripts, tests, collection runner, code snippets, cookies,
 console…) and adds tools Postman keeps behind a login or doesn't have at all:
 
+- API documentation: written next to the requests, published as a static site, Markdown or PDF
 - mock servers and webhook catchers
 - WebSocket, Server-Sent Events and GraphQL
 - OAuth 2.0, Digest, AWS SigV4 and Hawk auth, plus mTLS
@@ -295,6 +296,19 @@ node dist-cli/localpost.mjs run my-collection.json -e staging.postman_environmen
 - Exit code: `0` when every test passed, `1` when a test failed or a request errored, `2` for usage errors.
 - `npm link` puts a `localpost` command on your PATH. Run `localpost --help` for the full list of options.
 
+### Documentation from the command line
+
+The same generator as Docs → Publish, for CI:
+
+```bash
+node dist-cli/localpost.mjs docs my-collection.json -o site
+```
+
+- `--format site|html|markdown|openapi|openapi-json` picks the output (default: a static site folder).
+- `-e env.json` fills `{{variables}}` from an environment. Secret values never appear, and credential-like text is redacted unless you pass `--no-redact`.
+- `--check` reports missing or stale docs and exits 1 on errors (`--strict` also fails on warnings).
+- `localpost run my-collection.json --docs-drift` validates every response against the documented schemas and examples.
+
 ---
 
 ## Troubleshooting
@@ -351,13 +365,14 @@ the port in both `vite.config.ts` and `src-tauri/tauri.conf.json` (`build.devUrl
 │   │   ├── search.ts         # Command palette ranking, search, find & replace
 │   │   ├── reports.ts        # JSON / JUnit / HTML run reports
 │   │   ├── tools.ts          # Dev toolbox transforms (JWT, hashes, ids, cron…)
+│   │   ├── docs/             # API docs: model, schema tables, Markdown, site, checks, drift, changelog
 │   │   ├── events.ts         # Rust → UI event subscription
 │   │   ├── codegen.ts        # Code snippet generators
 │   │   ├── cm.ts             # CodeMirror theme, variable highlighting/completion
 │   │   ├── utils.ts          # Tree helpers, URL/params sync, formatting
 │   │   └── devShim.ts        # Browser-only dev fallback (not shipped)
-│   └── components/           # UI components (tools/ = Dev toolbox)
-├── cli/                      # Command-line runner (Node): localpost.ts + undici transport
+│   └── components/           # UI components (tools/ = Dev toolbox, docs/ = API documentation)
+├── cli/                      # Command-line runner (Node): localpost.ts (run), docs.ts (docs), undici transport
 ├── src-tauri/                # Backend (Rust)
 │   ├── src/lib.rs            # App setup, state, command registration
 │   ├── src/http.rs           # Native HTTP engine (reqwest), streaming, client certificates
@@ -369,6 +384,7 @@ the port in both `vite.config.ts` and `src-tauri/tauri.conf.json` (`build.devUrl
 │   ├── src/workspaces.rs     # Workspace registry + switching
 │   ├── src/linked.rs         # Linked-folder writes + file watching
 │   ├── src/load.rs           # Load test generator
+│   ├── src/docs.rs           # Publishing docs sites to a folder, print preview
 │   ├── tauri.conf.json       # Window, bundle and security (CSP) config
 │   └── capabilities/         # Tauri permission set for the webview
 ├── tests/                    # logic.test.ts (headless unit tests), cli.test.ts (CLI end-to-end)

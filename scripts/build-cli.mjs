@@ -16,5 +16,10 @@ await build({
   // Some dependencies are CommonJS and use require(); give the ESM bundle one.
   banner: { js: `import { createRequire as __cr } from "node:module"; const require = __cr(import.meta.url);` },
   logLevel: "info",
+  plugins: [{
+    // Vite-only `?raw` imports (the app's lazy mermaid asset) never run in the CLI.
+    name: "vite-raw-external",
+    setup(b) { b.onResolve({ filter: /\?raw$/ }, (a) => ({ path: a.path, external: true })); },
+  }],
 });
 await chmod(outfile, 0o755);

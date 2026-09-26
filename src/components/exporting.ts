@@ -5,10 +5,9 @@ import { api } from "../lib/api";
 import { exportPostmanCollection, exportPostmanEnvironment, type WorkspaceBackup } from "../lib/importexport";
 import { scanCollection, scanEnvironment, summarize, type Finding } from "../lib/leaks";
 import { choiceDialog, useStore } from "../store";
-import { exportHtmlDocs, exportOpenApi } from "../lib/exporters";
+import { exportOpenApi } from "../lib/exporters";
 import { exportHar } from "../lib/importers";
 import { stringify as toYaml } from "yaml";
-import { renderMarkdown } from "./Markdown";
 import type { HistoryEntry } from "../types";
 
 const fileName = (s: string) => s.replace(/[^\w.-]+/g, "_");
@@ -53,10 +52,10 @@ export async function exportOpenApiFile(c: Collection, format: "yaml" | "json") 
   else await write(`${fileName(c.name)}.openapi.json`, doc);
 }
 
+/** One self-contained HTML page (the same generator as Docs → Publish). */
 export async function exportDocsFile(c: Collection) {
-  const data = await guardedCollection(c);
-  if (!data) return;
-  await writeText(`${fileName(c.name)}-docs.html`, exportHtmlDocs(data, renderMarkdown), { name: "HTML", extensions: ["html"] });
+  const { publishSingleFile } = await import("./docs/publish");
+  await publishSingleFile(c);
 }
 
 export async function exportHistoryHar(entries: HistoryEntry[]) {

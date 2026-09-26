@@ -3,10 +3,12 @@ import { useMemo, useState } from "react";
 import type { KV, Tab } from "../types";
 import { exampleRoute } from "../lib/mock";
 import { findItem, getHeader, methodColor, statusColor, tryPrettyJson } from "../lib/utils";
-import { confirmDialog, deleteExample, duplicateExample, openRequest, updateExample, useStore } from "../store";
+import { confirmDialog, deleteExample, duplicateExample, openRequest, setDefaultExample, updateExample, useStore } from "../store";
+import { inferSchemaText } from "../lib/docs/schema";
+import { MarkdownField } from "./Markdown";
 import { CodeEditor, type CodeLang } from "./CodeEditor";
 import { KeyValueTable } from "./KeyValueTable";
-import { EditableText, Empty, Icon, IconButton, menuFromEvent, Tabs } from "./ui";
+import { EditableText, Empty, Icon, IconButton, menuFromEvent, Tabs, Toggle } from "./ui";
 
 function langFor(contentType: string, body: string): CodeLang {
   const ct = contentType.toLowerCase();
@@ -20,7 +22,7 @@ export function ExampleView({ tab }: { tab: Tab }) {
   const collection = useStore((s) => s.collections.find((c) => c.id === tab.collectionId));
   const req = collection && tab.requestId ? findItem(collection.items, tab.requestId) : undefined;
   const ex = req?.type === "request" ? req.examples?.find((e) => e.id === tab.exampleId) : undefined;
-  const [sub, setSub] = useState<"body" | "headers">("body");
+  const [sub, setSub] = useState<"body" | "headers" | "docs">("body");
 
   const headerRows: KV[] = useMemo(
     () => (ex?.headers ?? []).map((h, i) => ({ id: h.id ?? `${ex!.id}-h${i}`, key: h.key, value: h.value, enabled: h.enabled ?? true })),
@@ -64,7 +66,11 @@ export function ExampleView({ tab }: { tab: Tab }) {
         Served by mock servers at <code>{route.method} {route.path}{route.query.length ? `?${route.query.map((q) => `${q.key}=${q.value}`).join("&")}` : ""}</code>
         {" "}· choose it explicitly with the header <code>x-mock-response-name: {ex.name}</code>
       </div>
-      <Tabs value={sub} onChange={setSub} tabs={[{ id: "body", label: "Body" }, { id: "headers", label: "Headers", badge: ex.headers.length || undefined }]} />
+      <Tabs value={sub} onChange={setSub} tabs={[
+        { id: "body", label: "Body" },
+        { id: "headers", label: "Headers", badge: ex.headers.length || undefined },
+        { id: "docs", label: "Docs", badge: ex.description?.trim() || ex.schema?.trim() || ex.default ? "●" : undefined },
+      ]} />
       <div className="container-content">
         {sub === "body" && (
           ex.bodyBase64
@@ -77,6 +83,26 @@ export function ExampleView({ tab }: { tab: Tab }) {
                 <CodeEditor value={ex.body} onChange={(body) => set({ body })} language={langFor(ct, ex.body)} wrap />
               </div>
             )
+        )}
+        {sub === "docs" && (
+          <div className="rdocs">
+            <section className="rdocs-section rdocs-meta">
+              <Toggle checked={!!ex.default} onChange={(v) => setDefaultExample(collection.id, req.id, v ? ex.id : null)} label="Default example (shown first in the docs)" />
+            </section>
+            <section className="rdocs-section">
+              <div className="setting-title">Description</div>
+              <MarkdownField value={ex.description ?? ""} onChange={(description) => set({ description: description || undefined })} placeholder="When is this response returned?" />
+            </section>
+            <section className="rdocs-section">
+              <div className="rdocs-head">
+                <div><div className="setting-title">Schema</div><div className="setting-desc">JSON Schema for this response; overrides the request's response schema for status {ex.status}.</div></div>
+                <button className="btn btn-sm" disabled={tryPrettyJson(ex.body) === null} onClick={() => set({ schema: inferSchemaText(ex.body) })}><Icon name="bolt" size={11} /> Generate from body</button>
+              </div>
+              <div className="schema-editor">
+                <CodeEditor value={ex.schema ?? ""} onChange={(schema) => set({ schema: schema || undefined })} language="json" />
+              </div>
+            </section>
+          </div>
         )}
         {sub === "headers" && (
           <KeyValueTable rows={headerRows} onChange={(rows) => set({ headers: rows.map(({ id, key, value, enabled }) => ({ id, key, value, enabled })) })} />

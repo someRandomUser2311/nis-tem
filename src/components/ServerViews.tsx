@@ -1,4 +1,5 @@
 // Mock server and webhook catcher tabs, plus the sidebar's "Servers" panel.
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useMemo, useState } from "react";
 import type { ServerDef, ServerEvent, Tab } from "../types";
 import { compileRoutes } from "../lib/mock";
@@ -25,6 +26,14 @@ export function openMockFor(collectionId: string) {
   openSpecialTab("server", { serverId: def.id });
 }
 
+/** Open (or create) the live docs server for a collection. */
+export function openDocsServerFor(collectionId: string) {
+  const existing = useStore.getState().servers.find((d) => d.kind === "docs" && d.collectionId === collectionId);
+  const def = existing ?? createServer("docs", collectionId);
+  useStore.setState({ sidebarView: "servers" });
+  openSpecialTab("server", { serverId: def.id });
+}
+
 export function newCatcher() {
   const def = createServer("catcher");
   useStore.setState({ sidebarView: "servers" });
@@ -40,7 +49,7 @@ function ServerHeader({ def, rt }: { def: ServerDef; rt?: ServerRuntime }) {
   return (
     <>
       <div className="container-header">
-        <Icon name={def.kind === "mock" ? "server" : "inbox"} size={18} />
+        <Icon name={def.kind === "mock" ? "server" : def.kind === "docs" ? "docs" : "inbox"} size={18} />
         <EditableText className="container-title" value={def.name} onChange={(name) => updateServer(def.id, { name })} />
         <span className={`server-state ${running ? "on" : ""}`}><span className="server-dot" />{running ? "Running" : rt?.starting ? "Starting…" : "Stopped"}</span>
         <div className="flex-1" />
@@ -73,7 +82,7 @@ function ServerSettings({ def, running }: { def: ServerDef; running: boolean }) 
   const apply = (patch: Partial<ServerDef>) => { updateServer(def.id, patch); if (running) restartServer(def.id); };
   return (
     <div className="server-settings">
-      {def.kind === "mock" && (
+      {def.kind !== "catcher" && (
         <label className="server-field">
           <span>Collection</span>
           <select className="select" value={def.collectionId ?? ""} onChange={(e) => apply({ collectionId: e.target.value })}>
@@ -88,13 +97,13 @@ function ServerSettings({ def, running }: { def: ServerDef; running: boolean }) 
           onBlur={() => { const p = Math.min(65535, Number(port) || 0); if (p !== def.port) apply({ port: p }); }}
           onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} title="0 picks any free port" />
       </label>
-      <label className="server-field">
+      {def.kind !== "docs" && <label className="server-field">
         <span>Delay (ms)</span>
         <input className="input input-sm mono" value={delay} onChange={(e) => setDelay(e.target.value.replace(/\D/g, ""))}
           onBlur={() => { const d = Math.min(60000, Number(delay) || 0); if (d !== def.delayMs) apply({ delayMs: d }); }}
           onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
-      </label>
-      <Toggle checked={def.cors} onChange={(cors) => apply({ cors })} label="CORS headers" />
+      </label>}
+      {def.kind !== "docs" && <Toggle checked={def.cors} onChange={(cors) => apply({ cors })} label="CORS headers" />}
       <Toggle checked={def.allowLan} onChange={(allowLan) => apply({ allowLan })} label="Allow other devices on my network" />
       {def.allowLan && <span className="server-lan-warning"><Icon name="lock" size={11} /> Reachable from your local network while running</span>}
     </div>
@@ -189,7 +198,43 @@ export function ServerView({ tab }: { tab: Tab }) {
   const def = useStore((s) => s.servers.find((d) => d.id === tab.serverId));
   const rt = useStore((s) => (tab.serverId ? s.serverRuntime[tab.serverId] : undefined));
   if (!def) return <Empty icon="server" title="This server no longer exists" />;
-  return def.kind === "mock" ? <MockView def={def} rt={rt} /> : <CatcherView def={def} rt={rt} />;
+  return def.kind === "mock" ? <MockView def={def} rt={rt} /> : def.kind === "docs" ? <DocsServerView def={def} rt={rt} /> : <CatcherView def={def} rt={rt} />;
+}
+
+/** Live docs: the collection's docs site served on 127.0.0.1, rebuilt as the collection changes. */
+function DocsServerView({ def, rt }: { def: ServerDef; rt?: ServerRuntime }) {
+  const collection = useStore((s) => s.collections.find((c) => c.id === def.collectionId));
+  const [selected, setSelected] = useState<string>();
+  const log = rt?.log ?? [];
+  const ev = log.find((e) => e.id === selected) ?? log[0];
+  const url = serverUrl(rt, def);
+  return (
+    <div className="container-editor server-view">
+      <ServerHeader def={def} rt={rt} />
+      <div className="container-content">
+        <div className="docs-server-info">
+          {rt?.running ? (
+            <>
+              <p>The docs for <b>{collection?.name ?? "this collection"}</b> are being served at</p>
+              <div className="docs-server-url">
+                <span className="mono">{url}</span>
+                <button className="btn btn-primary btn-sm" onClick={() => openUrl(url).catch(() => {})}><Icon name="eye" size={12} /> Open in browser</button>
+              </div>
+              <p className="help">Edits to the collection show up when you refresh the page. Secret variables are never included; credential-like text is redacted.{def.allowLan ? " Other devices on your network can open it while this runs." : " Only this computer can open it."}</p>
+            </>
+          ) : (
+            <p className="help">Start the server to preview the published docs site in your browser, or share it on your network with “Allow other devices on my network”.</p>
+          )}
+        </div>
+        {log.length > 0 && (
+          <div className="server-log">
+            <EventList events={log} selected={ev?.id} onSelect={setSelected} />
+            {ev && <EventDetail ev={ev} port={rt?.port ?? def.port} />}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function MockView({ def, rt }: { def: ServerDef; rt?: ServerRuntime }) {
@@ -304,12 +349,18 @@ export function ServersPanel() {
   const runtime = useStore((s) => s.serverRuntime);
   const collections = useStore((s) => s.collections);
   const activeServer = useStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.serverId);
+  const mockMenu: MenuItem[] = collections.length
+    ? collections.map((c) => ({ label: `Mock server for “${c.name}”`, onClick: () => openMockFor(c.id) }))
+    : [{ label: "Create a collection to mock first", disabled: true }];
   const newMenu: MenuItem[] = [
-    ...(collections.length ? collections.map((c) => ({ label: `Mock server for “${c.name}”`, onClick: () => openMockFor(c.id) })) : [{ label: "Create a collection to mock first", disabled: true }]),
+    ...mockMenu,
+    { divider: true },
+    ...collections.map((c) => ({ label: `Docs server for “${c.name}”`, onClick: () => openDocsServerFor(c.id) })),
     { divider: true },
     { label: "Webhook catcher", onClick: newCatcher },
   ];
   const mocks = servers.filter((d) => d.kind === "mock");
+  const docsServers = servers.filter((d) => d.kind === "docs");
   const catchers = servers.filter((d) => d.kind === "catcher");
   const row = (d: ServerDef) => {
     const rt = runtime[d.id];
@@ -340,13 +391,15 @@ export function ServersPanel() {
           <Empty icon="server" title="Run servers on this computer">
             <b>Mock servers</b> answer with a collection's saved examples. <b>Webhook catchers</b> record every request sent to them. Both listen on 127.0.0.1 only.
             <div className="empty-actions">
-              <button className="btn btn-primary" onClick={(e) => menuFromEvent(e, newMenu.slice(0, -2))} disabled={!collections.length}>New mock server</button>
+              <button className="btn btn-primary" onClick={(e) => menuFromEvent(e, mockMenu)} disabled={!collections.length}>New mock server</button>
               <button className="btn" onClick={newCatcher}>New webhook catcher</button>
             </div>
           </Empty>
         )}
         {mocks.length > 0 && <div className="tree-group">Mock servers</div>}
         {mocks.map(row)}
+        {docsServers.length > 0 && <div className="tree-group">Docs servers</div>}
+        {docsServers.map(row)}
         {catchers.length > 0 && <div className="tree-group">Webhook catchers</div>}
         {catchers.map(row)}
       </div>

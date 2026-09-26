@@ -1,5 +1,5 @@
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
-import { EditorView, keymap, placeholder as cmPlaceholder } from "@codemirror/view";
+import { drawSelection, EditorView, keymap, placeholder as cmPlaceholder } from "@codemirror/view";
 import { Prec } from "@codemirror/state";
 import { useMemo, useRef } from "react";
 import { baseTheme, singleLine, variableCompletion, variableHighlighting } from "../lib/cm";
@@ -26,6 +26,8 @@ export function VarInput({ value, onChange, placeholder, onEnter, onPasteText, c
 
   const extensions = useMemo(() => [
     singleLine,
+    // Draw the cursor ourselves: WebKit's native caret is a tiny sliver next to the placeholder.
+    drawSelection(),
     baseTheme,
     EditorView.theme({ ".cm-content": { padding: "0" }, ".cm-line": { padding: "0" }, ".cm-scroller": { overflow: "hidden" } }),
     variableHighlighting(lookup),

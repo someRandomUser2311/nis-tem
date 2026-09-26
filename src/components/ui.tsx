@@ -8,6 +8,7 @@ const paths: Record<string, ReactNode> = {
   plus: <path d="M8 3v10M3 8h10" />,
   chevronRight: <path d="M6 3.5 10.5 8 6 12.5" />,
   chevronDown: <path d="M3.5 6 8 10.5 12.5 6" />,
+  chevronUp: <path d="M3.5 10 8 5.5 12.5 10" />,
   dots: <><circle cx="3.5" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="12.5" cy="8" r="1" fill="currentColor" stroke="none" /></>,
   folder: <path d="M1.5 4.5a1 1 0 0 1 1-1h3.3l1.4 1.5h6.3a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" />,
   folderOpen: <path d="M1.5 12.5V4.5a1 1 0 0 1 1-1h3.3l1.4 1.5h5.3a1 1 0 0 1 1 1V7M1.5 12.5l2-5h11l-2 5z" />,

@@ -32,7 +32,7 @@ export function toJsonReport(r: RunReport): string {
     startedAt: new Date(r.startedAt).toISOString(),
     finishedAt: new Date(r.finishedAt).toISOString(),
     totals: summarize(r),
-    results: r.entries,
+    results: r.entries.map(({ response: _response, ...e }) => e),
   }, null, 2);
 }
 

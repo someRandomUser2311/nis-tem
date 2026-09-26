@@ -3,11 +3,12 @@
 //   collection.json               name, auth, variables, scripts, and the order of its children
 //   users/folder.json             a folder (same idea)
 //   users/get-user.request.json   one request per file
+//   pages/getting-started.md      a docs guide page (plain Markdown)
 //
 // Keys are written in a fixed order and long text (scripts, bodies, descriptions) as arrays of
 // lines, so diffs stay small and readable. Secret variable values are never written.
 import type { Collection, Example, FolderItem, Item, KV, RequestItem } from "../types";
-import { newCollection, newFolder, newRequest } from "./utils";
+import { newCollection, newFolder, newRequest, uid } from "./utils";
 
 export const LINKED_FORMAT = "localpost-collection/1";
 
@@ -20,13 +21,18 @@ export function slugify(name: string): string {
   return s || "untitled";
 }
 
-const kvOut = (rows: KV[]) => rows.map(({ key, value, enabled, description, type, secret }) => ({
+/** Files that belong to a linked collection (everything else in the folder is left alone). */
+export const LINKED_FILE = /(^|\/)(collection|folder)\.json$|\.request\.json$|^pages\/[^/]+\.md$/;
+
+const kvOut = (rows: KV[]) => rows.map(({ key, value, enabled, description, type, secret, doc }) => ({
   key, value: secret ? "" : value, ...(enabled ? {} : { enabled: false }), ...(description ? { description } : {}), ...(type && type !== "text" ? { type } : {}), ...(secret ? { secret: true } : {}),
+  ...(doc && Object.keys(doc).length ? { doc } : {}),
 }));
 const kvIn = (rows: any, ids = false): KV[] => (Array.isArray(rows) ? rows : []).map((r: any, i: number) => ({
   id: ids && r.id ? r.id : `kv-${i}-${Math.random().toString(36).slice(2, 8)}`,
   key: String(r.key ?? ""), value: String(r.value ?? ""), enabled: r.enabled !== false,
   ...(r.description ? { description: String(r.description) } : {}), ...(r.type ? { type: r.type } : {}), ...(r.secret ? { secret: true } : {}),
+  ...(r.doc && typeof r.doc === "object" ? { doc: r.doc } : {}),
 }));
 
 function requestOut(r: RequestItem) {
@@ -54,7 +60,13 @@ function requestOut(r: RequestItem) {
     ...(r.description ? { description: lines(r.description) } : {}),
     ...(Object.keys(r.settings ?? {}).length ? { settings: r.settings } : {}),
     ...(r.ws ? { ws: r.ws } : {}),
-    ...(r.examples?.length ? { examples: r.examples.map((e) => ({ ...e, body: lines(e.body) })) } : {}),
+    ...(r.responseSchema?.trim() ? { responseSchema: lines(r.responseSchema) } : {}),
+    ...(r.docs && Object.keys(r.docs).length ? { docs: { ...r.docs, ...(r.docs.bodySchema ? { bodySchema: lines(r.docs.bodySchema) } : {}) } } : {}),
+    ...(r.examples?.length ? { examples: r.examples.map((e) => ({
+      ...e, body: lines(e.body),
+      ...(e.description ? { description: lines(e.description) } : {}),
+      ...(e.schema ? { schema: lines(e.schema) } : {}),
+    })) } : {}),
   };
 }
 
@@ -76,7 +88,13 @@ function requestIn(j: any): RequestItem {
   if (j.auth) r.auth = j.auth;
   if (j.protocol === "ws" || j.protocol === "sse") r.protocol = j.protocol;
   if (j.ws) r.ws = j.ws;
-  if (Array.isArray(j.examples)) r.examples = j.examples.map((e: any): Example => ({ ...e, body: text(e.body) }));
+  if (Array.isArray(j.examples)) r.examples = j.examples.map((e: any): Example => ({
+    ...e, body: text(e.body),
+    ...(e.description !== undefined ? { description: text(e.description) } : {}),
+    ...(e.schema !== undefined ? { schema: text(e.schema) } : {}),
+  }));
+  if (j.responseSchema !== undefined) r.responseSchema = text(j.responseSchema);
+  if (j.docs && typeof j.docs === "object") r.docs = { ...j.docs, ...(j.docs.bodySchema !== undefined ? { bodySchema: text(j.docs.bodySchema) } : {}) };
   r.body = {
     ...r.body,
     mode: b.mode ?? "none",
@@ -111,6 +129,7 @@ export function collectionToFiles(c: Collection): { path: string; content: strin
         files.push({ path: `${sub}/folder.json`, content: json({
           id: it.id, name: it.name, auth: it.auth,
           ...(it.description ? { description: lines(it.description) } : {}),
+          ...(it.docs?.hidden ? { docs: { hidden: true } } : {}),
           ...(it.preRequestScript ? { preRequestScript: lines(it.preRequestScript) } : {}),
           ...(it.testScript ? { testScript: lines(it.testScript) } : {}),
           order,
@@ -123,6 +142,15 @@ export function collectionToFiles(c: Collection): { path: string; content: strin
     });
   };
   const order = children(c.items, "");
+  // Guide pages are plain Markdown files, so they read well on GitHub and diff cleanly.
+  const pageNames = new Set<string>();
+  const pages = (c.pages ?? []).map((p) => {
+    let file = `${slugify(p.title)}.md`;
+    for (let n = 2; pageNames.has(file); n++) file = `${slugify(p.title)}-${n}.md`;
+    pageNames.add(file);
+    files.push({ path: `pages/${file}`, content: p.body.endsWith("\n") ? p.body : `${p.body}\n` });
+    return { id: p.id, title: p.title, file };
+  });
   files.unshift({ path: "collection.json", content: json({
     $format: LINKED_FORMAT,
     id: c.id,
@@ -132,6 +160,8 @@ export function collectionToFiles(c: Collection): { path: string; content: strin
     ...(c.variables.length ? { variables: kvOut(c.variables) } : {}),
     ...(c.preRequestScript ? { preRequestScript: lines(c.preRequestScript) } : {}),
     ...(c.testScript ? { testScript: lines(c.testScript) } : {}),
+    ...(pages.length ? { pages } : {}),
+    ...(c.docsConfig && Object.keys(c.docsConfig).length ? { docsConfig: c.docsConfig } : {}),
     order,
   }) });
   return files;
@@ -154,6 +184,13 @@ export function filesToCollection(files: { path: string; content: string }[], pr
   col.variables = kvIn(root.variables);
   col.preRequestScript = text(root.preRequestScript);
   col.testScript = text(root.testScript);
+  if (Array.isArray(root.pages)) {
+    col.pages = root.pages.map((p: any) => ({
+      id: String(p.id ?? uid()), title: String(p.title ?? "Page"),
+      body: (byPath.get(`pages/${p.file}`) ?? "").replace(/\n$/, ""),
+    }));
+  }
+  if (root.docsConfig && typeof root.docsConfig === "object") col.docsConfig = root.docsConfig;
   for (const v of col.variables) {
     const old = previous?.variables.find((x) => x.key === v.key);
     if (v.secret && !v.value && old?.value) v.value = old.value;
@@ -179,6 +216,7 @@ export function filesToCollection(files: { path: string; content: string }[], pr
       if (meta.id) f.id = meta.id;
       if (meta.auth) f.auth = meta.auth;
       f.description = text(meta.description);
+      if (meta.docs?.hidden) f.docs = { hidden: true };
       f.preRequestScript = text(meta.preRequestScript);
       f.testScript = text(meta.testScript);
       f.items = load(`${prefix}${name}`, meta.order);

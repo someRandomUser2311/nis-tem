@@ -4,7 +4,7 @@ import type { Collection, FolderItem, Tab } from "../types";
 import { exportCollectionFile, exportDocsFile, exportEnvironmentFile, exportOpenApiFile } from "./exporting";
 import { findItem, findPath, flattenRequests } from "../lib/utils";
 import {
-  addFolder, addRequestTo, openSpecialTab, setActiveEnvironment, setGlobals, updateCollection, updateEnvironment, updateItem, useStore,
+  addFolder, addRequestTo, openDocs, openSpecialTab, setActiveEnvironment, setGlobals, updateCollection, updateEnvironment, updateItem, useStore,
 } from "../store";
 import { AuthEditor, authLabel } from "./AuthEditor";
 import { effectiveAuth } from "../lib/engine";
@@ -41,6 +41,7 @@ export function CollectionEditor({ tab }: { tab: Tab }) {
             { divider: true },
             { label: "HTML documentation…", onClick: () => exportDocsFile(collection) },
           ])}><Icon name="export" /> Export <Icon name="chevronDown" size={11} /></button>
+          <button className="btn" onClick={() => openDocs(collection.id)}><Icon name="docs" /> Docs</button>
           <button className="btn btn-primary" onClick={() => openSpecialTab("runner", { collectionId: collection.id })}><Icon name="play" /> Run</button>
         </div>
         <Tabs

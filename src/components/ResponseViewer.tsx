@@ -49,10 +49,12 @@ function applyJsonPath(body: string, path: string): { text: string; error?: stri
   }
 }
 
-export function ResponseViewer({ result, previous, loading, onCancel, onSaveExample }: {
+export function ResponseViewer({ result, previous, loading, onCancel, onSaveExample, onUpdateExample }: {
   result?: RunResult; previous?: RunResult; loading?: boolean; onCancel: () => void;
   /** Undefined when the request isn't saved in a collection yet. */
   onSaveExample?: () => void;
+  /** Refresh the saved example for this status with the response (label says which). */
+  onUpdateExample?: { label: string; run: () => void };
 }) {
   const [tab, setTab] = useState<RTab>("body");
   const [view, setView] = useState<View>("pretty");
@@ -180,6 +182,7 @@ export function ResponseViewer({ result, previous, loading, onCancel, onSaveExam
         title="More"
         onClick={(e) => menuFromEvent(e, [
           { label: onSaveExample ? "Save as example…" : "Save as example (save the request first)", onClick: onSaveExample, disabled: !onSaveExample },
+          ...(onUpdateExample ? [{ label: onUpdateExample.label, onClick: onUpdateExample.run }] : []),
           { label: "Save response to file…", onClick: saveToFile },
           { label: "Copy response body", onClick: () => navigator.clipboard.writeText(res.bodyText) },
           { label: "Copy response headers", onClick: () => navigator.clipboard.writeText(res.headers.map((h) => `${h.key}: ${h.value}`).join("\n")) },

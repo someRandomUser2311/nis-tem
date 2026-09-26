@@ -11,6 +11,7 @@ import {
 import { THEMES } from "../themes";
 import { Icon } from "./ui";
 import { openTool, TOOLS } from "./tools";
+import { openDocs } from "../store";
 import { defaultWs } from "./LiveViews";
 
 interface Action {
@@ -48,6 +49,7 @@ function useActions(): Action[] {
       ...environments.map((e) => ({ id: `env-${e.id}`, title: `Environment: ${e.name}`, subtitle: "Set as active", run: () => setActiveEnvironment(e.id) })),
       ...collections.flatMap((c) => [
         { id: `run-${c.id}`, title: `Run: ${c.name}`, subtitle: "Collection runner", run: () => openSpecialTab("runner", { collectionId: c.id }) },
+        { id: `docs-${c.id}`, title: `Docs: ${c.name}`, subtitle: "View and edit API documentation", run: () => openDocs(c.id) },
         { id: `replace-${c.id}`, title: `Find & replace in: ${c.name}`, run: () => openModal({ kind: "replace", collectionId: c.id }) },
       ]),
     ];
