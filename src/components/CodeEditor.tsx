@@ -31,6 +31,12 @@ interface Props {
  */
 const reserveModEnter = Prec.highest(keymap.of([{ key: "Mod-Enter", run: () => true }]));
 
+/** Room between the gutter and the text, and on the right of wrapped lines. */
+const spacing = EditorView.theme({
+  ".cm-content": { padding: "6px 0" },
+  ".cm-line": { padding: "0 12px 0 10px" },
+});
+
 function langExt(l?: CodeLang) {
   switch (l) {
     case "json": return [json()];
@@ -51,6 +57,7 @@ export const CodeEditor = forwardRef<ReactCodeMirrorRef, Props>(function CodeEdi
   const extensions = useMemo(() => [
     reserveModEnter,
     baseTheme,
+    spacing,
     syntax,
     ...langExt(language),
     ...(wrap ? [EditorView.lineWrapping] : []),
@@ -65,7 +72,8 @@ export const CodeEditor = forwardRef<ReactCodeMirrorRef, Props>(function CodeEdi
       value={value}
       onChange={onChange}
       readOnly={readOnly}
-      editable={!readOnly}
+      // Read-only editors stay focusable, so a caret shows and you can shift-click / shift+arrow to select.
+      editable
       extensions={extensions}
       height={height}
       theme="none"

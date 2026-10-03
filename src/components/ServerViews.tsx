@@ -332,7 +332,7 @@ function CatcherView({ def, rt }: { def: ServerDef; rt?: ServerRuntime }) {
               <span>Status</span>
               <input className="input input-sm mono" type="number" min={100} max={599} value={response.status} onChange={(e) => setResponse({ status: Number(e.target.value) || 200 })} />
             </label>
-            <KeyValueTable rows={response.headers} onChange={(headers) => setResponse({ headers })} title="Headers" />
+            <KeyValueTable suggest="response-headers" rows={response.headers} onChange={(headers) => setResponse({ headers })} title="Headers" />
             <div className="catcher-body"><CodeEditor value={response.body} onChange={(body) => setResponse({ body })} language={tryPrettyJson(response.body) !== null ? "json" : "text"} /></div>
             {rt?.running && <button className="btn btn-primary" onClick={() => restartServer(def.id)}>Apply</button>}
           </div>

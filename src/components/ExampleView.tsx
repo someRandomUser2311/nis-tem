@@ -105,7 +105,7 @@ export function ExampleView({ tab }: { tab: Tab }) {
           </div>
         )}
         {sub === "headers" && (
-          <KeyValueTable rows={headerRows} onChange={(rows) => set({ headers: rows.map(({ id, key, value, enabled }) => ({ id, key, value, enabled })) })} />
+          <KeyValueTable suggest="response-headers" rows={headerRows} onChange={(rows) => set({ headers: rows.map(({ id, key, value, enabled }) => ({ id, key, value, enabled })) })} />
         )}
       </div>
     </div>

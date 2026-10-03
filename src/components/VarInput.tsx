@@ -1,6 +1,7 @@
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { drawSelection, EditorView, keymap, placeholder as cmPlaceholder } from "@codemirror/view";
-import { Prec } from "@codemirror/state";
+import type { CompletionSource } from "@codemirror/autocomplete";
+import { EditorState, Prec } from "@codemirror/state";
 import { useMemo, useRef } from "react";
 import { baseTheme, singleLine, variableCompletion, variableHighlighting } from "../lib/cm";
 import { useVarLookup, useVarRepaint } from "./VarContext";
@@ -14,10 +15,12 @@ interface Props {
   onPasteText?: (text: string) => boolean;
   className?: string;
   autoFocus?: boolean;
+  /** Extra suggestions (e.g. header names), merged with {{variable}} completion. Keep the array stable. */
+  completions?: CompletionSource[];
 }
 
 /** Single-line input with {{variable}} highlighting, hover tooltips and completion. */
-export function VarInput({ value, onChange, placeholder, onEnter, onPasteText, className, autoFocus }: Props) {
+export function VarInput({ value, onChange, placeholder, onEnter, onPasteText, className, autoFocus, completions }: Props) {
   const lookup = useVarLookup();
   const cm = useRef<ReactCodeMirrorRef>(null);
   useVarRepaint(() => cm.current?.view);
@@ -32,6 +35,7 @@ export function VarInput({ value, onChange, placeholder, onEnter, onPasteText, c
     EditorView.theme({ ".cm-content": { padding: "0" }, ".cm-line": { padding: "0" }, ".cm-scroller": { overflow: "hidden" } }),
     variableHighlighting(lookup),
     variableCompletion(lookup),
+    ...(completions?.length ? [EditorState.languageData.of(() => completions.map((autocomplete) => ({ autocomplete })))] : []),
     cmPlaceholder(placeholder ?? ""),
     Prec.high(keymap.of([{
       key: "Enter",
@@ -44,7 +48,7 @@ export function VarInput({ value, onChange, placeholder, onEnter, onPasteText, c
         return false;
       },
     }),
-  ], [lookup, placeholder]);
+  ], [lookup, placeholder, completions]);
 
   return (
     <CodeMirror

@@ -1,7 +1,9 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import type { CompletionSource } from "@codemirror/autocomplete";
 import type { KV } from "../types";
 import { uid } from "../lib/utils";
+import { headerNameCompletion, headerValueCompletion, REQUEST_HEADERS, RESPONSE_HEADERS } from "../lib/headers";
 import { Icon, IconButton } from "./ui";
 import { VarInput } from "./VarInput";
 import { ParamDocChips, ParamDocPopover } from "./docs/ParamDocPopover";
@@ -18,6 +20,8 @@ interface Props {
   allowBulk?: boolean;
   /** Show per-row API docs details (required, type, enum…). */
   docs?: boolean;
+  /** Suggest common header names and values as you type. */
+  suggest?: "request-headers" | "response-headers";
 }
 
 function toBulk(rows: KV[]) {
@@ -36,13 +40,26 @@ function fromBulk(text: string, old: KV[]): KV[] {
   });
 }
 
-export function KeyValueTable({ rows, onChange, variant = "default", keyPlaceholder = "Key", valuePlaceholder = "Value", title, readonlyRows, allowBulk = true, docs }: Props) {
+export function KeyValueTable({ rows, onChange, variant = "default", keyPlaceholder = "Key", valuePlaceholder = "Value", title, readonlyRows, allowBulk = true, docs, suggest }: Props) {
   const [docFor, setDocFor] = useState<{ id: string; el: HTMLElement } | null>(null);
   const [ghostId, setGhostId] = useState(uid);
   const [bulk, setBulk] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [showReadonly, setShowReadonly] = useState(false);
   const [reveal, setReveal] = useState<Record<string, boolean>>({});
+  const keysRef = useRef<Record<string, string>>({});
+  const keyCompletions = useMemo(
+    () => (suggest ? [headerNameCompletion(suggest === "request-headers" ? REQUEST_HEADERS : RESPONSE_HEADERS)] : undefined),
+    [suggest],
+  );
+  // One value source per row, reading that row's current key, so typing doesn't rebuild editors.
+  const valueSources = useRef(new Map<string, CompletionSource[]>());
+  const valueCompletions = (id: string) => {
+    if (!suggest) return undefined;
+    let s = valueSources.current.get(id);
+    if (!s) { s = [headerValueCompletion(() => keysRef.current[id] ?? "")]; valueSources.current.set(id, s); }
+    return s;
+  };
 
   const update = (id: string, patch: Partial<KV>) => {
     if (id === ghostId) {
@@ -56,6 +73,7 @@ export function KeyValueTable({ rows, onChange, variant = "default", keyPlacehol
   const allEnabled = rows.length > 0 && rows.every((r) => r.enabled);
 
   const display: (KV & { ghost?: boolean })[] = [...rows, { id: ghostId, key: "", value: "", enabled: true, ghost: true, type: "text" }];
+  keysRef.current = Object.fromEntries(display.map((r) => [r.id, r.key]));
 
   const pickFile = async (id: string) => {
     const path = await open({ multiple: false, directory: false });
@@ -123,7 +141,7 @@ export function KeyValueTable({ rows, onChange, variant = "default", keyPlacehol
                 </td>
                 <td>
                   <div className="kv-cell">
-                    <VarInput value={r.key} onChange={(v) => update(r.id, { key: v })} placeholder={keyPlaceholder} />
+                    <VarInput value={r.key} onChange={(v) => update(r.id, { key: v })} placeholder={keyPlaceholder} completions={keyCompletions} />
                     {docs && <ParamDocChips doc={r.doc} />}
                     {variant === "formdata" && (
                       <select
@@ -150,7 +168,7 @@ export function KeyValueTable({ rows, onChange, variant = "default", keyPlacehol
                     </div>
                   ) : (
                     <div className="kv-cell">
-                      <VarInput value={r.value} onChange={(v) => update(r.id, { value: v })} placeholder={valuePlaceholder} />
+                      <VarInput value={r.value} onChange={(v) => update(r.id, { value: v })} placeholder={valuePlaceholder} completions={valueCompletions(r.id)} />
                     </div>
                   )}
                 </td>

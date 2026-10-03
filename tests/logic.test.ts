@@ -32,6 +32,9 @@ import { inferSchema, schemaRows } from "../src/lib/docs/schema";
 import { renderDocsMarkdown, requestLinks } from "../src/lib/docs/markdown";
 import { buildDocsModel, endpoints } from "../src/lib/docs/model";
 import { cloneWithNewIds } from "../src/lib/utils";
+import { CompletionContext } from "@codemirror/autocomplete";
+import { EditorState } from "@codemirror/state";
+import { headerNameCompletion, headerValueCompletion, REQUEST_HEADERS, RESPONSE_HEADERS } from "../src/lib/headers";
 
 let fails = 0;
 const ok = (c: any, m: string) => { if (!c) { fails++; console.log("FAIL", m); } else console.log("ok  ", m); };
@@ -710,6 +713,23 @@ ok(csv.length === 2 && csv[0].name === "Ada, L" && csv[1].age === '4"2', "csv pa
   applyExampleCapture(cc.id, plan.responses);
   const ex = (docsStore.getState().collections[0].items[0] as any).examples;
   ok(ex.length === 2 && ex[0].name === "Nice name" && ex[0].description === "kept" && ex[0].body.includes('"v": 2') && ex[1].status === 404 && ex[1].name === "404 Not Found", "capture: updates keep name/description, new statuses added");
+}
+
+// ================================================================ header suggestions
+{
+  const ctx = (doc: string, explicit = false) => new CompletionContext(EditorState.create({ doc }), doc.length, explicit);
+  const names = headerNameCompletion(REQUEST_HEADERS);
+  const r1 = names(ctx("con")) as any;
+  const labels = r1?.options.map((o: any) => o.label) ?? [];
+  ok(r1 && r1.from === 0 && labels.includes("Content-Type") && labels.includes("Connection"), "headers: names offered while typing");
+  ok(names(ctx("")) === null && (names(ctx("", true)) as any)?.options.length === REQUEST_HEADERS.length, "headers: empty key only on Ctrl-Space");
+  ok(names(ctx("{{to")) === null, "headers: no header names inside {{variables}}");
+  const vals = headerValueCompletion(() => "content-type");
+  ok((vals(ctx("app")) as any)?.options.some((o: any) => o.label === "application/json"), "headers: values follow the row's key");
+  ok(headerValueCompletion(() => "X-Custom")(ctx("a")) === null, "headers: unknown header has no values");
+  ok(vals(ctx("{{")) === null, "headers: no values inside {{variables}}");
+  const uniq = (l: { name: string }[]) => new Set(l.map((h) => h.name.toLowerCase())).size === l.length;
+  ok(uniq(REQUEST_HEADERS) && uniq(RESPONSE_HEADERS), "headers: no duplicate names");
 }
 
 console.log(fails ? `\n${fails} FAILURES` : "\nALL PASSED");

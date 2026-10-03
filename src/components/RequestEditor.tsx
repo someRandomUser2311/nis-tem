@@ -236,7 +236,7 @@ export function RequestEditor({ tab }: { tab: Tab }) {
               </>
             )}
             {sub === "auth" && <AuthEditor auth={draft.auth} onChange={(auth) => set({ auth })} inheritedFrom={inheritedFrom} />}
-            {sub === "headers" && <KeyValueTable title={protocol === "ws" ? "Handshake headers" : "Headers"} rows={draft.headers} onChange={(headers) => set({ headers })} readonlyRows={protocol === "http" ? autoHeaders : undefined} docs />}
+            {sub === "headers" && <KeyValueTable title={protocol === "ws" ? "Handshake headers" : "Headers"} rows={draft.headers} onChange={(headers) => set({ headers })} readonlyRows={protocol === "http" ? autoHeaders : undefined} docs suggest="request-headers" />}
             {sub === "body" && <BodyEditor body={draft.body} onChange={(body) => set({ body })} requestId={draft.id} onFetchSchema={() => fetchGraphqlSchema(tab.id)} />}
             {sub === "scripts" && <ScriptEditor pre={draft.preRequestScript} test={draft.testScript} onChange={set} />}
             {sub === "docs" && <RequestDocs tab={tab} draft={draft} onChange={set} />}

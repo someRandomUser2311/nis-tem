@@ -343,6 +343,7 @@ input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
 .code-editor { height: 100%; min-height: 0; overflow: hidden; }
 .code-editor .cm-editor { height: 100%; }
 .code-editor .cm-scroller { font-family: var(--mono); line-height: 1.55; }
+.code-editor .cm-content { cursor: text; }
 
 /* scripts */
 .scripts { display: flex; flex: 1; min-height: 0; }
