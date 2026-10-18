@@ -6,6 +6,7 @@ import { Icon, IconButton, menuFromEvent } from "./ui";
 import { Logo } from "./Logo";
 import { defaultWs } from "./LiveViews";
 import { WorkspaceSwitcher } from "./Workspaces";
+import { shortcutLabel } from "../lib/platform";
 
 export function Header() {
   const environments = useStore((s) => s.environments);
@@ -20,7 +21,7 @@ export function Header() {
       </div>
       <WorkspaceSwitcher />
       <button className="btn btn-sm" onClick={(e) => menuFromEvent(e, [
-        { label: "HTTP Request", shortcut: "⌘T", onClick: () => newRequestTab() },
+        { label: "HTTP Request", shortcut: shortcutLabel("⌘T"), onClick: () => newRequestTab() },
         { label: "WebSocket", onClick: () => newRequestTab({ name: "WebSocket", protocol: "ws", ws: defaultWs() }) },
         { label: "Server-Sent Events", onClick: () => newRequestTab({ name: "Event stream", protocol: "sse" }) },
         { label: "Collection", onClick: () => { const c = createCollection(); setSidebarView("collections"); openSpecialTab("collection", { collectionId: c.id }); } },
@@ -28,17 +29,17 @@ export function Header() {
       ])}>
         <Icon name="plus" size={12} /> New
       </button>
-      <button className="btn btn-sm" onClick={() => openModal({ kind: "import" })} title="Import (⌘O)">
+      <button className="btn btn-sm" onClick={() => openModal({ kind: "import" })} title={`Import (${shortcutLabel("⌘O")})`}>
         <Icon name="import" size={12} /> Import
       </button>
       <div className="local-badge" title="Everything is stored on this computer. No account, no sync, no telemetry.">
         <Icon name="lock" size={11} /> Local workspace
       </div>
       <div className="flex-1" />
-      <button className="header-search" onClick={() => openModal({ kind: "palette", mode: "go" })} title="Search and commands (⌘K)">
+      <button className="header-search" onClick={() => openModal({ kind: "palette", mode: "go" })} title={`Search and commands (${shortcutLabel("⌘K")})`}>
         <Icon name="search" size={13} />
         <span className="header-search-text">Search requests, environments, actions</span>
-        <kbd>⌘K</kbd>
+        <kbd>{shortcutLabel("⌘K")}</kbd>
       </button>
       <div className="flex-1" />
       <div className="env-select">
@@ -53,7 +54,7 @@ export function Header() {
         {peek && <EnvPeek onClose={() => setPeek(false)} />}
       </div>
       <IconButton icon="cookie" title="Cookies" onClick={() => openModal({ kind: "cookies" })} />
-      <IconButton icon="gear" title="Settings (⌘,)" onClick={() => openModal({ kind: "settings" })} />
+      <IconButton icon="gear" title={`Settings (${shortcutLabel("⌘,")})`} onClick={() => openModal({ kind: "settings" })} />
     </header>
   );
 }

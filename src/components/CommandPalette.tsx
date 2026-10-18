@@ -13,6 +13,7 @@ import { Icon } from "./ui";
 import { openTool, TOOLS } from "./tools";
 import { openDocs } from "../store";
 import { defaultWs } from "./LiveViews";
+import { shortcutLabel } from "../lib/platform";
 
 interface Action {
   id: string;
@@ -28,20 +29,20 @@ function useActions(): Action[] {
   const settings = useStore((s) => s.settings);
   return useMemo(() => {
     const a: Action[] = [
-      { id: "new-request", title: "New request", shortcut: "⌘T", run: () => newRequestTab() },
+      { id: "new-request", title: "New request", shortcut: shortcutLabel("⌘T"), run: () => newRequestTab() },
       { id: "new-ws", title: "New WebSocket request", run: () => newRequestTab({ name: "WebSocket", protocol: "ws", ws: defaultWs() }) },
       { id: "new-sse", title: "New Server-Sent Events request", run: () => newRequestTab({ name: "Event stream", protocol: "sse" }) },
       { id: "new-collection", title: "New collection", run: () => { const c = createCollection(); setSidebarView("collections"); openSpecialTab("collection", { collectionId: c.id }); } },
       { id: "new-env", title: "New environment", run: () => { const e = createEnvironment(); setSidebarView("environments"); openSpecialTab("environment", { environmentId: e.id }); } },
-      { id: "import", title: "Import…", shortcut: "⌘O", run: () => openModal({ kind: "import" }) },
-      { id: "settings", title: "Open settings", shortcut: "⌘,", run: () => openModal({ kind: "settings" }) },
+      { id: "import", title: "Import…", shortcut: shortcutLabel("⌘O"), run: () => openModal({ kind: "import" }) },
+      { id: "settings", title: "Open settings", shortcut: shortcutLabel("⌘,"), run: () => openModal({ kind: "settings" }) },
       { id: "globals", title: "Edit globals", run: () => openSpecialTab("globals") },
-      { id: "console", title: "Toggle console", shortcut: "⌘⌥C", run: () => toggleConsole() },
+      { id: "console", title: "Toggle console", shortcut: shortcutLabel("⌘⌥C"), run: () => toggleConsole() },
       { id: "mode", title: `Switch to ${settings.mode === "dark" ? "light" : "dark"} mode`, run: () => updateSettings({ mode: settings.mode === "dark" ? "light" : "dark" }) },
       { id: "layout", title: settings.layout === "vertical" ? "Show response beside the request" : "Show response below the request", run: () => updateSettings({ layout: settings.layout === "vertical" ? "horizontal" : "vertical" }) },
       { id: "cookies", title: "Manage cookies", run: () => openModal({ kind: "cookies" }) },
       { id: "load", title: "Load test the current request", run: () => { const s = useStore.getState(); const t = s.tabs.find((x) => x.id === s.activeTabId); if (t?.kind === "request") openLoadTest(t.id); } },
-      { id: "search", title: "Search inside requests…", shortcut: "⌘⇧F", run: () => openModal({ kind: "palette", mode: "search" }) },
+      { id: "search", title: "Search inside requests…", shortcut: shortcutLabel("⌘⇧F"), run: () => openModal({ kind: "palette", mode: "search" }) },
       { id: "env-compare", title: "Compare environments", run: () => openModal({ kind: "envCompare" }) },
       ...TOOLS.map((t) => ({ id: `tool-${t.id}`, title: `Tool: ${t.name}`, subtitle: t.description, run: () => openTool(t.id) })),
       ...THEMES.filter((t) => t.id !== settings.theme).map((t) => ({ id: `theme-${t.id}`, title: `Theme: ${t.name}`, run: () => updateSettings({ theme: t.id }) })),

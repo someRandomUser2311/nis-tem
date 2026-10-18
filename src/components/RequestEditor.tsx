@@ -17,6 +17,7 @@ import { ScriptEditor } from "./ScriptEditor";
 import { EditableText, Icon, menuFromEvent, Splitter, Tabs } from "./ui";
 import { VarInput } from "./VarInput";
 import { defaultWs, LiveViewer, WsComposer } from "./LiveViews";
+import { shortcutLabel } from "../lib/platform";
 
 type SubTab = "message" | "params" | "auth" | "headers" | "body" | "scripts" | "docs" | "settings";
 
@@ -144,7 +145,7 @@ export function RequestEditor({ tab }: { tab: Tab }) {
           {PROTOCOLS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
         </select>
         <div className="split-btn">
-          <button className="btn" onClick={() => saveTab(tab.id)} title="Save (⌘S)">
+          <button className="btn" onClick={() => saveTab(tab.id)} title={`Save (${shortcutLabel("⌘S")})`}>
             <Icon name="save" /> Save
           </button>
           <button
@@ -195,11 +196,11 @@ export function RequestEditor({ tab }: { tab: Tab }) {
         {protocol !== "http" ? (
           liveActive
             ? <button className="btn btn-send cancel" onClick={() => disconnectLive(tab.id)}>{protocol === "ws" ? "Disconnect" : "Stop"}</button>
-            : <button className="btn btn-send" onClick={() => primaryAction(tab.id)} title="Connect (⌘↵)">Connect</button>
+            : <button className="btn btn-send" onClick={() => primaryAction(tab.id)} title={`Connect (${shortcutLabel("⌘↵")})`}>Connect</button>
         ) : tab.loading ? (
           <button className="btn btn-send cancel" onClick={() => cancelTab(tab.id)}>Cancel</button>
         ) : (
-          <button className="btn btn-send" onClick={() => primaryAction(tab.id)} title="Send (⌘↵)">Send</button>
+          <button className="btn btn-send" onClick={() => primaryAction(tab.id)} title={`Send (${shortcutLabel("⌘↵")})`}>Send</button>
         )}
       </div>
 

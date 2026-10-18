@@ -34,6 +34,7 @@ import { buildDocsModel, endpoints } from "../src/lib/docs/model";
 import { cloneWithNewIds } from "../src/lib/utils";
 import { CompletionContext } from "@codemirror/autocomplete";
 import { EditorState } from "@codemirror/state";
+import { shortcutLabel } from "../src/lib/platform";
 import { headerNameCompletion, headerValueCompletion, REQUEST_HEADERS, RESPONSE_HEADERS } from "../src/lib/headers";
 
 let fails = 0;
@@ -731,6 +732,11 @@ ok(csv.length === 2 && csv[0].name === "Ada, L" && csv[1].age === '4"2', "csv pa
   const uniq = (l: { name: string }[]) => new Set(l.map((h) => h.name.toLowerCase())).size === l.length;
   ok(uniq(REQUEST_HEADERS) && uniq(RESPONSE_HEADERS), "headers: no duplicate names");
 }
+
+// ================================================================ shortcut labels
+ok(shortcutLabel("⌘⇧F", true) === "⌘⇧F" && shortcutLabel("⌘K", true) === "⌘K", "shortcuts: Mac keeps symbols");
+ok(shortcutLabel("⌘⇧F", false) === "Ctrl+Shift+F" && shortcutLabel("⌘⌥C", false) === "Ctrl+Alt+C" && shortcutLabel("⌘↵", false) === "Ctrl+Enter"
+  && shortcutLabel("⌘,", false) === "Ctrl+," && shortcutLabel("⌘\\", false) === "Ctrl+\\", "shortcuts: Windows/Linux spell them out");
 
 console.log(fails ? `\n${fails} FAILURES` : "\nALL PASSED");
 process.exit(fails ? 1 : 0);

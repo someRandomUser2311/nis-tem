@@ -17,6 +17,7 @@ import { requestCloseTab, TabBar } from "./components/TabBar";
 import { Empty, Icon, MenuHost, Splitter } from "./components/ui";
 import { VarProvider } from "./components/VarContext";
 import { applyTheme } from "./themes";
+import { shortcutLabel } from "./lib/platform";
 
 function TabContent({ tab }: { tab: Tab }) {
   switch (tab.kind) {
@@ -108,10 +109,10 @@ export default function App() {
         </div>
       </div>
       <footer className="statusbar">
-        <button className="status-btn" onClick={() => setSidebarW((w) => (w < 80 ? 320 : 0))} title="Toggle sidebar (⌘\)">
+        <button className="status-btn" onClick={() => setSidebarW((w) => (w < 80 ? 320 : 0))} title={`Toggle sidebar (${shortcutLabel("⌘\\")})`}>
           <Icon name="layoutH" size={12} />
         </button>
-        <button className={`status-btn ${consoleOpen ? "active" : ""}`} onClick={() => toggleConsole()} title="Console (⌘⌥C)">
+        <button className={`status-btn ${consoleOpen ? "active" : ""}`} onClick={() => toggleConsole()} title={`Console (${shortcutLabel("⌘⌥C")})`}>
           <Icon name="terminal" size={12} /> Console {consoleErrors > 0 && <span className="status-err">{consoleErrors}</span>}
         </button>
         <span className="status-note"><Icon name="lock" size={11} /> Offline-first · no account · no telemetry</span>

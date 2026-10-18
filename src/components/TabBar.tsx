@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { choiceDialog, closeOtherTabs, closeTab, newRequestTab, saveTab, setActiveTab, useStore } from "../store";
 import { toolById } from "./tools";
 import { Icon, IconButton, menuFromEvent } from "./ui";
+import { shortcutLabel } from "../lib/platform";
 
 export function useTabTitle(tab: Tab): { title: string; icon?: string; method?: string } {
   const collections = useStore((s) => s.collections);
@@ -75,7 +76,7 @@ function TabItem({ tab, active }: { tab: Tab; active: boolean }) {
       <span className="tab-title">{title}</span>
       <span className="tab-close-wrap">
         {tab.dirty && <span className="tab-dirty" />}
-        <button className="tab-close" onClick={(e) => { e.stopPropagation(); requestCloseTab(tab); }} title="Close (⌘W)">
+        <button className="tab-close" onClick={(e) => { e.stopPropagation(); requestCloseTab(tab); }} title={`Close (${shortcutLabel("⌘W")})`}>
           <Icon name="close" size={10} />
         </button>
       </span>
@@ -94,7 +95,7 @@ export function TabBar() {
       <div className="tabs-scroll" onWheel={(e) => { (e.currentTarget as HTMLElement).scrollLeft += e.deltaY; }}>
         {tabs.map((t) => <TabItem key={t.id} tab={t} active={t.id === activeTabId} />)}
       </div>
-      <IconButton icon="plus" title="New request (⌘T)" onClick={() => newRequestTab()} className="tab-new" />
+      <IconButton icon="plus" title={`New request (${shortcutLabel("⌘T")})`} onClick={() => newRequestTab()} className="tab-new" />
     </div>
   );
 }

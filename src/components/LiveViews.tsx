@@ -5,6 +5,7 @@ import { tryPrettyJson, uid } from "../lib/utils";
 import { clearLive, prompt, resolveForSend, sendWsMessage, updateDraft } from "../store";
 import { CodeEditor } from "./CodeEditor";
 import { Empty, Icon, IconButton, Toggle } from "./ui";
+import { shortcutLabel } from "../lib/platform";
 
 export const defaultWs = (): WsConfig => ({ message: "", messageLanguage: "json", protocols: "", saved: [] });
 
@@ -122,7 +123,7 @@ export function WsComposer({ tab }: { tab: Tab }) {
             const name = await prompt("Save message", ws.message.trim().slice(0, 40), "Name");
             if (name?.trim()) set({ saved: [...ws.saved, { id: uid(), name: name.trim(), body: ws.message }] });
           }}><Icon name="save" size={11} /> Save</button>
-          <button className="btn btn-sm btn-primary" disabled={!connected || !ws.message} onClick={send} title={connected ? "Send (⌘↵)" : "Connect first"}>Send</button>
+          <button className="btn btn-sm btn-primary" disabled={!connected || !ws.message} onClick={send} title={connected ? `Send (${shortcutLabel("⌘↵")})` : "Connect first"}>Send</button>
         </div>
         <div className="ws-editor-code">
           <CodeEditor value={ws.message} onChange={(message) => set({ message })} language={ws.messageLanguage === "json" ? "json" : "text"} variables placeholder="Message to send — {{variables}} are resolved" />
